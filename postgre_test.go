@@ -94,3 +94,87 @@ func TestPostgresSelectPagination(t *testing.T) {
 		t.Fatalf("[POSTGRE_SELECT_TEST] Args Not Match: %v", args)
 	}
 }
+
+func TestPostgresInsert(t *testing.T) {
+	resultQueryString := `INSERT INTO "example_table" ("new_seq", "new_id", "new_name") VALUES ($1, $2, $3)`
+	resultArgs := []interface{}{1, "abc123", "testName"}
+
+	// INSERT 쿼리 예시
+	insertData := map[string]interface{}{
+		"new_seq":  1,
+		"new_id":   "abc123",
+		"new_name": "testName",
+	}
+
+	qb := gqbd.NewQueryBuilder("postgres", "example_table")
+
+	queryString, args, buildErr := qb.BuildInsert(insertData)
+
+	if buildErr != nil {
+		t.Fatalf("[POSTGRE_INSERT_TEST] Make Query String Error: %v", buildErr)
+	}
+
+	if queryString != resultQueryString {
+		t.Fatalf("[POSTGRE_INSERT_TEST] Not Match: %v", queryString)
+	}
+
+	if !reflect.DeepEqual(resultArgs, args) {
+		t.Fatalf("[POSTGRE_INSERT_TEST] Args Not Match: %v", args)
+	}
+}
+
+func TestPostgresUpdate(t *testing.T) {
+	resultQueryString := `UPDATE "example_table" SET "new_seq" = $1, "new_id" = $2, "new_name" = $3`
+	resultArgs := []interface{}{1, "abc123", "testName"}
+
+	// INSERT 쿼리 예시
+	insertData := map[string]interface{}{
+		"new_seq":  1,
+		"new_id":   "abc123",
+		"new_name": "testName",
+	}
+
+	queryString, args, buildErr := gqbd.NewQueryBuilder("postgres", "example_table").
+		BuildUpdate(insertData)
+
+	if buildErr != nil {
+		t.Fatalf("[POSTGRE_UPDATE_TEST] Make Query String Error: %v", buildErr)
+	}
+
+	if queryString != resultQueryString {
+		t.Fatalf("[POSTGRE_UPDATE_TEST] Not Match: %v", queryString)
+	}
+
+	if !reflect.DeepEqual(resultArgs, args) {
+		t.Fatalf("[POSTGRE_UPDATE_TEST] Args Not Match: %v", args)
+	}
+}
+
+func TestPostgresUpdateWithConditions(t *testing.T) {
+	resultQueryString := `UPDATE "example_table" SET "new_seq" = $1, "new_id" = $2, "new_name" = $3 WHERE exam_id = $4 AND new_name = $5`
+	resultArgs := []interface{}{1, "abc123", "donghquinn", "dong15234", "testName"}
+
+	// INSERT 쿼리 예시
+	insertData := map[string]interface{}{
+		"new_seq":  1,
+		"new_id":   "abc123",
+		"new_name": "donghquinn",
+	}
+
+	queryString, args, buildErr := gqbd.NewQueryBuilder("postgres", "example_table").
+		Where("exam_id = ?", "dong15234").
+		Where("new_name = ?", "testName").
+		BuildUpdate(insertData)
+
+	if buildErr != nil {
+		t.Fatalf("[POSTGRE_UPDATE_TEST] Make Query String Error: %v", buildErr)
+	}
+
+	if queryString != resultQueryString {
+		t.Fatalf("[POSTGRE_UPDATE_TEST] Not Match: %v", queryString)
+	}
+
+	if !reflect.DeepEqual(resultArgs, args) {
+		t.Fatalf("[POSTGRE_UPDATE_TEST] Args Not Match: %v", args)
+	}
+}

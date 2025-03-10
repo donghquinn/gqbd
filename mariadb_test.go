@@ -94,3 +94,89 @@ func TestMariadbSelectPagination(t *testing.T) {
 		t.Fatalf("[MARIADB_SELECT_TEST] Args Not Match: %v", args)
 	}
 }
+
+func TestMariadbInsert(t *testing.T) {
+	resultQueryString := "INSERT INTO `example_table` (`new_seq`, `new_id`, `new_name`) VALUES (?, ?, ?)"
+	resultArgs := []interface{}{1, "abc123", "testName"}
+
+	// INSERT 쿼리 예시
+	insertData := map[string]interface{}{
+		"new_seq":  1,
+		"new_id":   "abc123",
+		"new_name": "testName",
+	}
+
+	qb := gqbd.NewQueryBuilder("mariadb", "example_table")
+
+	queryString, args, buildErr := qb.BuildInsert(insertData)
+
+	if buildErr != nil {
+		t.Fatalf("[MARIADB_INSERT_TEST] Make Query String Error: %v", buildErr)
+	}
+
+	if queryString != resultQueryString {
+		t.Fatalf("[MARIADB_INSERT_TEST] Not Match: %v", queryString)
+	}
+
+	if !reflect.DeepEqual(resultArgs, args) {
+		t.Fatalf("[MARIADB_INSERT_TEST] Args Not Match: %v", args)
+	}
+}
+
+func TestMariadbUpdate(t *testing.T) {
+	resultQueryString := "UPDATE `example_table` SET `new_seq` = ?, `new_id` = ?, `new_name` = ?"
+	resultArgs := []interface{}{1, "abc123", "testName"}
+
+	// INSERT 쿼리 예시
+	updateData := map[string]interface{}{
+		"new_seq":  1,
+		"new_id":   "abc123",
+		"new_name": "testName",
+	}
+
+	qb := gqbd.NewQueryBuilder("mariadb", "example_table")
+
+	queryString, args, buildErr := qb.BuildUpdate(updateData)
+
+	if buildErr != nil {
+		t.Fatalf("[MARIADB_UPDATE_TEST] Make Query String Error: %v", buildErr)
+	}
+
+	if queryString != resultQueryString {
+		t.Fatalf("[MARIADB_UPDATE_TEST] Not Match: %v", queryString)
+	}
+
+	if !reflect.DeepEqual(resultArgs, args) {
+		t.Fatalf("[MARIADB_UPDATE_TEST] Args Not Match: %v", args)
+	}
+}
+
+func TestMariadbUpdateWithConditions(t *testing.T) {
+	resultQueryString := "UPDATE `example_table` SET `new_seq` = ?, `new_id` = ?, `new_name` = ? WHERE exam_id = ? AND new_name = ?"
+	resultArgs := []interface{}{1, "abc123", "donghquinn", "dong15234", "testName"}
+
+	// INSERT 쿼리 예시
+	updateData := map[string]interface{}{
+		"new_seq":  1,
+		"new_id":   "abc123",
+		"new_name": "donghquinn",
+	}
+
+	qb := gqbd.NewQueryBuilder("mariadb", "example_table").
+		Where("exam_id = ?", "dong15234").
+		Where("new_name = ?", "testName")
+
+	queryString, args, buildErr := qb.BuildUpdate(updateData)
+
+	if buildErr != nil {
+		t.Fatalf("[MARIADB_UPDATE_TEST] Make Query String Error: %v", buildErr)
+	}
+
+	if queryString != resultQueryString {
+		t.Fatalf("[MARIADB_UPDATE_TEST] Not Match: %v", queryString)
+	}
+
+	if !reflect.DeepEqual(resultArgs, args) {
+		t.Fatalf("[MARIADB_UPDATE_TEST] Args Not Match: %v", args)
+	}
+}
