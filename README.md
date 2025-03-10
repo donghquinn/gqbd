@@ -24,6 +24,8 @@ go get git@github.com:donghquinn/go-query-builder.git
     * build error is the error checking dbTypes
     * query string will contains ?(mariadb/mysql) or $N(postgres)
 
+### Postgres
+
 ```go
 package example
 
@@ -42,6 +44,53 @@ func example() {
     
     queryString, args, buildErr := qb.Build()
 
+    /*
+        @@ Query String Result @@
+        SELECT exam_id, exam_name
+        FROM example_table
+        WHERE exam_name = $1
+
+        @@ Query Arguments @@
+        "data"
+    */
+    queryResult, queryErr := dbCon.QueryRows(queryString, args)
+     
+    /*
+        Query Result Error Handling
+    */
+}
+
+```
+
+### Mysql / Mariadb
+
+```go
+package example
+
+import 	gqbd "github.com/donghquinn/go-query-builder"
+
+func example() {
+    dbCon, conErr := database.MariadbConnection()
+
+    /*
+        Logics
+    */
+
+    // Arguments: DB Type, Table Name, Columns...
+    qb := gqbd.NewQueryBuilder("mariadb", "example_table", "exam_id", "exam_name").
+        Where("exam_name = ?", "data")
+    
+    queryString, args, buildErr := qb.Build()
+
+    /*
+        @@ Query String Result @@
+        SELECT exam_id, exam_name
+        FROM example_table
+        WHERE exam_name = ?
+
+        @@ Query Arguments @@
+        "data"
+    */
     queryResult, queryErr := dbCon.QueryRows(queryString, args)
      
     /*
