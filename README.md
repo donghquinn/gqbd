@@ -11,7 +11,7 @@
 ## Installation
 
 ```zsh
-go get git@github.com:donghquinn/go-query-builder
+go get github.com/donghquinn/go-query-builder
 ```
 
 
