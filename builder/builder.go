@@ -125,9 +125,12 @@ func (qb *QueryBuilder) Having(condition string, args ...interface{}) *QueryBuil
 // OrderBy: 정렬 추가
 func (qb *QueryBuilder) OrderBy(column string, direction string, allowedColumns map[string]bool) *QueryBuilder {
 	direction = validateDirection(direction)
-	if _, ok := allowedColumns[column]; !ok {
-		column = "id" // 기본 정렬 컬럼 (변경 가능)
+	if allowedColumns != nil {
+		if _, ok := allowedColumns[column]; !ok {
+			column = "id" // 기본 정렬 컬럼 (변경 가능)
+		}
 	}
+
 	safeCol := escapeIdentifier(qb.dbType, column)
 	qb.orderBy = fmt.Sprintf("%s %s", safeCol, direction)
 	return qb
