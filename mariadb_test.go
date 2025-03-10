@@ -7,7 +7,7 @@ import (
 	gqbd "github.com/donghquinn/go-query-builder"
 )
 
-func TestPostgresSelect(t *testing.T) {
+func TestMariadbSelect(t *testing.T) {
 	resultQueryString := `SELECT "new_id", "new_name" FROM "new_table"`
 
 	qb := gqbd.NewQueryBuilder("postgres", "new_table", "new_id", "new_name")
@@ -19,7 +19,7 @@ func TestPostgresSelect(t *testing.T) {
 	}
 }
 
-func TestPostgresSelectWhere(t *testing.T) {
+func TestMariadbSelectWhere(t *testing.T) {
 	resultQueryString := `SELECT "new_id", "new_name" FROM "new_table" WHERE new_id = $1`
 
 	resultArgs := []interface{}{"abc123"}
@@ -37,7 +37,7 @@ func TestPostgresSelectWhere(t *testing.T) {
 	}
 }
 
-func TestPostgresSelectWhereWithOrderBy(t *testing.T) {
+func TestMariadbSelectWhereWithOrderBy(t *testing.T) {
 	resultQueryString := `SELECT "new_seq", "new_id", "new_name" FROM "new_table" WHERE new_id = $1 ORDER BY "new_seq" DESC`
 
 	resultArgs := []interface{}{"abc123"}
