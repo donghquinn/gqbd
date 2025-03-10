@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// DB 타입 정의 (PostgreSQL, MariaDB)
+// DBType represents the type of database (PostgreSQL or MariaDB).
 type DBType string
 
 const (
@@ -13,7 +13,8 @@ const (
 	MariaDB    DBType = "mariadb"
 )
 
-// QueryBuilder 구조체
+// QueryBuilder is a flexible SQL query builder that supports both PostgreSQL and MariaDB.
+// It allows constructing complex queries with WHERE, JOIN, GROUP BY, ORDER BY, LIMIT, and more.
 type QueryBuilder struct {
 	dbType     DBType
 	table      string
@@ -29,7 +30,8 @@ type QueryBuilder struct {
 	distinct   bool
 }
 
-// NewQueryBuilder: 테이블 및 컬럼 이스케이프 처리
+// NewQueryBuilder initializes a new QueryBuilder instance for a given table and column selection.
+// It ensures that table and column names are safely escaped.
 func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuilder {
 	safeTable := escapeIdentifier(dbType, table)
 	safeColumns := make([]string, len(columns))
@@ -46,41 +48,41 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 	}
 }
 
-// Distinct: DISTINCT 추가
+// Distinct enables DISTINCT in the SQL query.
 func (qb *QueryBuilder) Distinct() *QueryBuilder {
 	qb.distinct = true
 	return qb
 }
 
-// Aggregate: COUNT, SUM, AVG 등 집계 함수 지원
+// Aggregate adds aggregate functions (e.g., COUNT, SUM, AVG) to the query.
 func (qb *QueryBuilder) Aggregate(function, column string) *QueryBuilder {
 	safeCol := escapeIdentifier(qb.dbType, column)
 	qb.columns = append(qb.columns, fmt.Sprintf("%s(%s)", function, safeCol))
 	return qb
 }
 
-// LeftJoin: LEFT JOIN 추가
-func (qb *QueryBuilder) LeftJoin(joinTable string, onCondition string) *QueryBuilder {
+// LeftJoin adds a LEFT JOIN clause to the query.
+func (qb *QueryBuilder) LeftJoin(joinTable, onCondition string) *QueryBuilder {
 	safeTable := escapeIdentifier(qb.dbType, joinTable)
 	qb.joins = append(qb.joins, fmt.Sprintf("LEFT JOIN %s ON %s", safeTable, onCondition))
 	return qb
 }
 
-// InnerJoin: INNER JOIN 추가
-func (qb *QueryBuilder) InnerJoin(joinTable string, onCondition string) *QueryBuilder {
+// InnerJoin adds an INNER JOIN clause to the query.
+func (qb *QueryBuilder) InnerJoin(joinTable, onCondition string) *QueryBuilder {
 	safeTable := escapeIdentifier(qb.dbType, joinTable)
 	qb.joins = append(qb.joins, fmt.Sprintf("INNER JOIN %s ON %s", safeTable, onCondition))
 	return qb
 }
 
-// RightJoin: RIGHT JOIN 추가
-func (qb *QueryBuilder) RightJoin(joinTable string, onCondition string) *QueryBuilder {
+// RightJoin adds a RIGHT JOIN clause to the query.
+func (qb *QueryBuilder) RightJoin(joinTable, onCondition string) *QueryBuilder {
 	safeTable := escapeIdentifier(qb.dbType, joinTable)
 	qb.joins = append(qb.joins, fmt.Sprintf("RIGHT JOIN %s ON %s", safeTable, onCondition))
 	return qb
 }
 
-// Where: 안전한 WHERE 처리 (PostgreSQL: $1, $2 / MariaDB: ?)
+// Where adds a WHERE clause with safely parameterized conditions.
 func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuilder {
 	updatedCondition := replacePlaceholders(qb.dbType, condition, len(qb.args)+1)
 	qb.conditions = append(qb.conditions, updatedCondition)
@@ -88,7 +90,7 @@ func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuild
 	return qb
 }
 
-// WhereIn: IN 조건 추가
+// WhereIn adds an IN clause with multiple values.
 func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuilder {
 	safeCol := escapeIdentifier(qb.dbType, column)
 	placeholders := generatePlaceholders(qb.dbType, len(qb.args)+1, len(values))
@@ -97,7 +99,7 @@ func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuild
 	return qb
 }
 
-// WhereBetween: BETWEEN 조건 추가
+// WhereBetween adds a BETWEEN clause to the query.
 func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *QueryBuilder {
 	safeCol := escapeIdentifier(qb.dbType, column)
 	placeholders := generatePlaceholders(qb.dbType, len(qb.args)+1, 2)
@@ -106,7 +108,7 @@ func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *Que
 	return qb
 }
 
-// GroupBy: GROUP BY 추가
+// GroupBy adds GROUP BY clauses to the query.
 func (qb *QueryBuilder) GroupBy(columns ...string) *QueryBuilder {
 	for _, col := range columns {
 		qb.groupBy = append(qb.groupBy, escapeIdentifier(qb.dbType, col))
@@ -114,7 +116,7 @@ func (qb *QueryBuilder) GroupBy(columns ...string) *QueryBuilder {
 	return qb
 }
 
-// Having: HAVING 조건 추가
+// Having adds a HAVING clause to filter aggregated results.
 func (qb *QueryBuilder) Having(condition string, args ...interface{}) *QueryBuilder {
 	updatedCondition := replacePlaceholders(qb.dbType, condition, len(qb.args)+1)
 	qb.having = append(qb.having, updatedCondition)
@@ -122,34 +124,32 @@ func (qb *QueryBuilder) Having(condition string, args ...interface{}) *QueryBuil
 	return qb
 }
 
-// OrderBy: 정렬 추가
-func (qb *QueryBuilder) OrderBy(column string, direction string, allowedColumns map[string]bool) *QueryBuilder {
+// OrderBy adds an ORDER BY clause with SQL injection protection via allowed columns.
+func (qb *QueryBuilder) OrderBy(column, direction string, allowedColumns map[string]bool) *QueryBuilder {
 	direction = validateDirection(direction)
 	if allowedColumns != nil {
 		if _, ok := allowedColumns[column]; !ok {
-			column = "id" // 기본 정렬 컬럼 (변경 가능)
+			column = "id" // Default sorting column
 		}
 	}
-
 	safeCol := escapeIdentifier(qb.dbType, column)
 	qb.orderBy = fmt.Sprintf("%s %s", safeCol, direction)
 	return qb
 }
 
-// DynamicOrderBy: 안전한 동적 정렬 처리
-func (qb *QueryBuilder) DynamicOrderBy(dynamicColumn, defaultColumn, direction string, allowedColumns map[string]bool) *QueryBuilder {
-	direction = validateDirection(direction)
-	targetColumn := defaultColumn
-	if dynamicColumn != "" && allowedColumns[dynamicColumn] {
-		targetColumn = dynamicColumn
-	}
-	safeCol := escapeIdentifier(qb.dbType, targetColumn)
-	qb.orderBy = fmt.Sprintf("%s %s", safeCol, direction)
+// Limit sets the query's LIMIT value.
+func (qb *QueryBuilder) Limit(limit int) *QueryBuilder {
+	qb.limit = limit
 	return qb
 }
 
-// Build: 최종 쿼리 생성 (나머지 메소드는 동일)
+// Offset sets the query's OFFSET value.
+func (qb *QueryBuilder) Offset(offset int) *QueryBuilder {
+	qb.offset = offset
+	return qb
+}
 
+// escapeIdentifier safely escapes table and column names to prevent SQL injection.
 func escapeIdentifier(dbType DBType, name string) string {
 	if name == "*" {
 		return name
@@ -160,7 +160,7 @@ func escapeIdentifier(dbType DBType, name string) string {
 	return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
 }
 
-// 🔹 정렬 방향 검증 (ASC / DESC만 허용)
+// validateDirection ensures only "ASC" or "DESC" are used in ORDER BY clauses.
 func validateDirection(direction string) string {
 	direction = strings.ToUpper(direction)
 	if direction != "ASC" && direction != "DESC" {
@@ -169,10 +169,10 @@ func validateDirection(direction string) string {
 	return direction
 }
 
-// 🔹 플레이스홀더 변환 (PostgreSQL: $N / MariaDB: ?)
+// replacePlaceholders replaces placeholders with parameterized values for safe SQL execution.
 func replacePlaceholders(dbType DBType, condition string, startIdx int) string {
 	if dbType == MariaDB {
-		return condition // MariaDB는 그냥 ? 사용
+		return condition // MariaDB uses "?" directly
 	}
 
 	var result strings.Builder
@@ -188,19 +188,7 @@ func replacePlaceholders(dbType DBType, condition string, startIdx int) string {
 	return result.String()
 }
 
-// Limit: 제한 추가
-func (qb *QueryBuilder) Limit(limit int) *QueryBuilder {
-	qb.limit = limit
-	return qb
-}
-
-// Offset: 페이지네이션 추가
-func (qb *QueryBuilder) Offset(offset int) *QueryBuilder {
-	qb.offset = offset
-	return qb
-}
-
-// generatePlaceholders: PostgreSQL($N) & MariaDB(?) 플레이스홀더 생성
+// generatePlaceholders generates SQL placeholders for parameterized queries.
 func generatePlaceholders(dbType DBType, startIdx, count int) string {
 	placeholders := make([]string, count)
 
@@ -215,35 +203,32 @@ func generatePlaceholders(dbType DBType, startIdx, count int) string {
 	return strings.Join(placeholders, ", ")
 }
 
-// Build: 최종 SQL 쿼리 생성
+// Build constructs the final SQL query string with safely parameterized values.
 func (qb *QueryBuilder) Build() (string, []interface{}) {
 	var queryBuilder strings.Builder
 
-	// SELECT 절
+	// SELECT clause
 	queryBuilder.WriteString("SELECT ")
 	queryBuilder.WriteString(strings.Join(qb.columns, ", "))
 	queryBuilder.WriteString(" FROM ")
 	queryBuilder.WriteString(qb.table)
 
-	// JOIN 절 추가
+	// JOIN clauses
 	if len(qb.joins) > 0 {
-		queryBuilder.WriteString(" ")
-		queryBuilder.WriteString(strings.Join(qb.joins, " "))
+		queryBuilder.WriteString(" " + strings.Join(qb.joins, " "))
 	}
 
-	// WHERE 절
+	// WHERE clause
 	if len(qb.conditions) > 0 {
-		queryBuilder.WriteString(" WHERE ")
-		queryBuilder.WriteString(strings.Join(qb.conditions, " AND "))
+		queryBuilder.WriteString(" WHERE " + strings.Join(qb.conditions, " AND "))
 	}
 
-	// ORDER BY 절
+	// ORDER BY clause
 	if qb.orderBy != "" {
-		queryBuilder.WriteString(" ORDER BY ")
-		queryBuilder.WriteString(qb.orderBy)
+		queryBuilder.WriteString(" ORDER BY " + qb.orderBy)
 	}
 
-	// LIMIT & OFFSET 추가 (PostgreSQL은 $N 형식 사용)
+	// LIMIT & OFFSET handling
 	argIdx := len(qb.args) + 1
 	if qb.limit > 0 {
 		queryBuilder.WriteString(fmt.Sprintf(" LIMIT $%d", argIdx))
