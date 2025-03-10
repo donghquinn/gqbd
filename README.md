@@ -11,7 +11,7 @@
 ## Installation
 
 ```zsh
-go get git@github.com:donghquinn/go-query-builder.git
+go get git@github.com:donghquinn/go-query-builder
 ```
 
 
@@ -19,12 +19,14 @@ go get git@github.com:donghquinn/go-query-builder.git
 
 * First of all, create DB Connection.
 *  You can give Database Type for creating prepared statments
-    * You can use "postgres", "mariadb", "mysql"
+    * You can use "postgres", "mariadb" and "mysql"
+    * I'm opened to add more database types (Planning for sqlite3)
 * It will retury Query string, arguments, and build error
     * build error is the error checking dbTypes
     * query string will contains ?(mariadb/mysql) or $N(postgres)
 
 ### Postgres
+* It uses $N for prepared statment
 
 ```go
 package example
@@ -63,6 +65,7 @@ func example() {
 ```
 
 ### Mysql / Mariadb
+* It uses ? for prepared statment
 
 ```go
 package example
