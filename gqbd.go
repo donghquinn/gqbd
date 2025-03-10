@@ -103,7 +103,7 @@ func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuild
 func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *QueryBuilder {
 	safeCol := escapeIdentifier(qb.dbType, column)
 	placeholders := generatePlaceholders(qb.dbType, len(qb.args)+1, 2)
-	qb.conditions = append(qb.conditions, fmt.Sprintf("%s BETWEEN %s AND %s", safeCol, placeholders))
+	qb.conditions = append(qb.conditions, fmt.Sprintf(" BETWEEN %s AND %s", safeCol, placeholders))
 	qb.args = append(qb.args, start, end)
 	return qb
 }

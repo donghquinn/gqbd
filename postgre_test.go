@@ -8,7 +8,9 @@ import (
 )
 
 func TestPostgresSelect(t *testing.T) {
-	resultQueryString := `SELECT "new_id", "new_name" FROM "new_table"`
+	resultQueryString := `
+		SELECT "new_id", "new_name" FROM "new_table"
+	`
 
 	qb := gqbd.NewQueryBuilder("postgres", "new_table", "new_id", "new_name")
 
@@ -20,7 +22,9 @@ func TestPostgresSelect(t *testing.T) {
 }
 
 func TestPostgresSelectWhere(t *testing.T) {
-	resultQueryString := `SELECT "new_id", "new_name" FROM "new_table" WHERE new_id = $1`
+	resultQueryString := `
+		SELECT "new_id", "new_name" FROM "new_table" WHERE new_id = $1
+	`
 
 	resultArgs := []interface{}{"abc123"}
 
@@ -38,7 +42,9 @@ func TestPostgresSelectWhere(t *testing.T) {
 }
 
 func TestPostgresSelectWhereWithOrderBy(t *testing.T) {
-	resultQueryString := `SELECT "new_seq", "new_id", "new_name" FROM "new_table" WHERE new_id = $1 ORDER BY "new_seq" DESC`
+	resultQueryString := `
+		SELECT "new_seq", "new_id", "new_name" FROM "new_table" WHERE new_id = $1 ORDER BY "new_seq" DESC
+	`
 
 	resultArgs := []interface{}{"abc123"}
 
@@ -51,6 +57,31 @@ func TestPostgresSelectWhereWithOrderBy(t *testing.T) {
 	if queryString != resultQueryString {
 		t.Fatalf("[SELECT_TEST] Not Match: %v", queryString)
 	}
+	if !reflect.DeepEqual(resultArgs, args) {
+		t.Fatalf("[SELECT_TEST] Args Not Match: %v", args)
+	}
+}
+
+func TestPostgresSelectPagination(t *testing.T) {
+	resultQueryString := `
+		SELECT "new_seq", "new_id", "new_name" FROM "new_table" WHERE new_id = $1 AND new_name = $2 ORDER BY "new_seq" DESC LIMIT $3 OFFSET $4
+	`
+
+	resultArgs := []interface{}{"abc123", "testName", 10, 3}
+
+	qb := gqbd.NewQueryBuilder("postgres", "new_table", "new_seq", "new_id", "new_name").
+		Where("new_id = ?", "abc123").
+		Where("new_name = ?", "testName").
+		OrderBy("new_seq", "DESC", nil).
+		Offset(3).
+		Limit(10)
+
+	queryString, args := qb.Build()
+
+	if queryString != resultQueryString {
+		t.Fatalf("[SELECT_TEST] Not Match: %v", queryString)
+	}
+
 	if !reflect.DeepEqual(resultArgs, args) {
 		t.Fatalf("[SELECT_TEST] Args Not Match: %v", args)
 	}
