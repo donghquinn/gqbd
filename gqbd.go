@@ -11,10 +11,10 @@ type DBType string
 const (
 	PostgreSQL DBType = "postgres"
 	MariaDB    DBType = "mariadb"
+	Mysql      DBType = "mysql"
 )
 
 // QueryBuilder is a flexible SQL query builder that supports both PostgreSQL and MariaDB.
-// It allows constructing complex queries with WHERE, JOIN, GROUP BY, ORDER BY, LIMIT, and more.
 type QueryBuilder struct {
 	dbType     DBType
 	table      string
@@ -28,62 +28,108 @@ type QueryBuilder struct {
 	offset     int
 	args       []interface{}
 	distinct   bool
+	err        error // 내부 에러를 저장하는 필드 추가
 }
 
 // NewQueryBuilder initializes a new QueryBuilder instance for a given table and column selection.
-// It ensures that table and column names are safely escaped.
 func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuilder {
-	safeTable := escapeIdentifier(dbType, table)
+	qb := &QueryBuilder{dbType: dbType}
+
+	// 테이블 이름 escape
+	safeTable, err := escapeIdentifier(dbType, table)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
+	qb.table = safeTable
+
+	// 컬럼들 escape
 	safeColumns := make([]string, len(columns))
 	for i, col := range columns {
-		safeColumns[i] = escapeIdentifier(dbType, col)
+		safeCol, err := escapeIdentifier(dbType, col)
+		if err != nil {
+			qb.err = err
+			return qb
+		}
+		safeColumns[i] = safeCol
 	}
 	if len(safeColumns) == 0 {
 		safeColumns = []string{"*"}
 	}
-	return &QueryBuilder{
-		dbType:  dbType,
-		table:   safeTable,
-		columns: safeColumns,
-	}
+	qb.columns = safeColumns
+	return qb
 }
 
 // Distinct enables DISTINCT in the SQL query.
 func (qb *QueryBuilder) Distinct() *QueryBuilder {
+	if qb.err != nil {
+		return qb
+	}
 	qb.distinct = true
 	return qb
 }
 
 // Aggregate adds aggregate functions (e.g., COUNT, SUM, AVG) to the query.
 func (qb *QueryBuilder) Aggregate(function, column string) *QueryBuilder {
-	safeCol := escapeIdentifier(qb.dbType, column)
+	if qb.err != nil {
+		return qb
+	}
+	safeCol, err := escapeIdentifier(qb.dbType, column)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
 	qb.columns = append(qb.columns, fmt.Sprintf("%s(%s)", function, safeCol))
 	return qb
 }
 
 // LeftJoin adds a LEFT JOIN clause to the query.
 func (qb *QueryBuilder) LeftJoin(joinTable, onCondition string) *QueryBuilder {
-	safeTable := escapeIdentifier(qb.dbType, joinTable)
+	if qb.err != nil {
+		return qb
+	}
+	safeTable, err := escapeIdentifier(qb.dbType, joinTable)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
 	qb.joins = append(qb.joins, fmt.Sprintf("LEFT JOIN %s ON %s", safeTable, onCondition))
 	return qb
 }
 
 // InnerJoin adds an INNER JOIN clause to the query.
 func (qb *QueryBuilder) InnerJoin(joinTable, onCondition string) *QueryBuilder {
-	safeTable := escapeIdentifier(qb.dbType, joinTable)
+	if qb.err != nil {
+		return qb
+	}
+	safeTable, err := escapeIdentifier(qb.dbType, joinTable)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
 	qb.joins = append(qb.joins, fmt.Sprintf("INNER JOIN %s ON %s", safeTable, onCondition))
 	return qb
 }
 
 // RightJoin adds a RIGHT JOIN clause to the query.
 func (qb *QueryBuilder) RightJoin(joinTable, onCondition string) *QueryBuilder {
-	safeTable := escapeIdentifier(qb.dbType, joinTable)
+	if qb.err != nil {
+		return qb
+	}
+	safeTable, err := escapeIdentifier(qb.dbType, joinTable)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
 	qb.joins = append(qb.joins, fmt.Sprintf("RIGHT JOIN %s ON %s", safeTable, onCondition))
 	return qb
 }
 
 // Where adds a WHERE clause with safely parameterized conditions.
 func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuilder {
+	if qb.err != nil {
+		return qb
+	}
 	updatedCondition := replacePlaceholders(qb.dbType, condition, len(qb.args)+1)
 	qb.conditions = append(qb.conditions, updatedCondition)
 	qb.args = append(qb.args, args...)
@@ -92,7 +138,14 @@ func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuild
 
 // WhereIn adds an IN clause with multiple values.
 func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuilder {
-	safeCol := escapeIdentifier(qb.dbType, column)
+	if qb.err != nil {
+		return qb
+	}
+	safeCol, err := escapeIdentifier(qb.dbType, column)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
 	placeholders := generatePlaceholders(qb.dbType, len(qb.args)+1, len(values))
 	qb.conditions = append(qb.conditions, fmt.Sprintf("%s IN (%s)", safeCol, placeholders))
 	qb.args = append(qb.args, values...)
@@ -101,23 +154,41 @@ func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuild
 
 // WhereBetween adds a BETWEEN clause to the query.
 func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *QueryBuilder {
-	safeCol := escapeIdentifier(qb.dbType, column)
+	if qb.err != nil {
+		return qb
+	}
+	safeCol, err := escapeIdentifier(qb.dbType, column)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
 	placeholders := generatePlaceholders(qb.dbType, len(qb.args)+1, 2)
-	qb.conditions = append(qb.conditions, fmt.Sprintf("%s BETWEEN %s AND %s", safeCol, placeholders))
+	qb.conditions = append(qb.conditions, fmt.Sprintf(" BETWEEN %s AND %s", safeCol, placeholders))
 	qb.args = append(qb.args, start, end)
 	return qb
 }
 
 // GroupBy adds GROUP BY clauses to the query.
 func (qb *QueryBuilder) GroupBy(columns ...string) *QueryBuilder {
+	if qb.err != nil {
+		return qb
+	}
 	for _, col := range columns {
-		qb.groupBy = append(qb.groupBy, escapeIdentifier(qb.dbType, col))
+		safeCol, err := escapeIdentifier(qb.dbType, col)
+		if err != nil {
+			qb.err = err
+			return qb
+		}
+		qb.groupBy = append(qb.groupBy, safeCol)
 	}
 	return qb
 }
 
 // Having adds a HAVING clause to filter aggregated results.
 func (qb *QueryBuilder) Having(condition string, args ...interface{}) *QueryBuilder {
+	if qb.err != nil {
+		return qb
+	}
 	updatedCondition := replacePlaceholders(qb.dbType, condition, len(qb.args)+1)
 	qb.having = append(qb.having, updatedCondition)
 	qb.args = append(qb.args, args...)
@@ -126,38 +197,55 @@ func (qb *QueryBuilder) Having(condition string, args ...interface{}) *QueryBuil
 
 // OrderBy adds an ORDER BY clause with SQL injection protection via allowed columns.
 func (qb *QueryBuilder) OrderBy(column, direction string, allowedColumns map[string]bool) *QueryBuilder {
+	if qb.err != nil {
+		return qb
+	}
 	direction = validateDirection(direction)
 	if allowedColumns != nil {
 		if _, ok := allowedColumns[column]; !ok {
 			column = "id" // Default sorting column
 		}
 	}
-	safeCol := escapeIdentifier(qb.dbType, column)
+	safeCol, err := escapeIdentifier(qb.dbType, column)
+	if err != nil {
+		qb.err = err
+		return qb
+	}
 	qb.orderBy = fmt.Sprintf("%s %s", safeCol, direction)
 	return qb
 }
 
 // Limit sets the query's LIMIT value.
 func (qb *QueryBuilder) Limit(limit int) *QueryBuilder {
+	if qb.err != nil {
+		return qb
+	}
 	qb.limit = limit
 	return qb
 }
 
 // Offset sets the query's OFFSET value.
 func (qb *QueryBuilder) Offset(offset int) *QueryBuilder {
+	if qb.err != nil {
+		return qb
+	}
 	qb.offset = offset
 	return qb
 }
 
 // escapeIdentifier safely escapes table and column names to prevent SQL injection.
-func escapeIdentifier(dbType DBType, name string) string {
+func escapeIdentifier(dbType DBType, name string) (string, error) {
 	if name == "*" {
-		return name
+		return name, nil
 	}
 	if dbType == PostgreSQL {
-		return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`))
+		return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`)), nil
 	}
-	return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
+
+	if dbType == MariaDB || dbType == Mysql {
+		return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``")), nil
+	}
+	return "", fmt.Errorf("unsupported db type: %v", dbType)
 }
 
 // validateDirection ensures only "ASC" or "DESC" are used in ORDER BY clauses.
@@ -174,7 +262,6 @@ func replacePlaceholders(dbType DBType, condition string, startIdx int) string {
 	if dbType == MariaDB {
 		return condition // MariaDB uses "?" directly
 	}
-
 	var result strings.Builder
 	placeholderCount := startIdx
 	for _, char := range condition {
@@ -191,7 +278,6 @@ func replacePlaceholders(dbType DBType, condition string, startIdx int) string {
 // generatePlaceholders generates SQL placeholders for parameterized queries.
 func generatePlaceholders(dbType DBType, startIdx, count int) string {
 	placeholders := make([]string, count)
-
 	for i := 0; i < count; i++ {
 		if dbType == PostgreSQL {
 			placeholders[i] = fmt.Sprintf("$%d", startIdx+i)
@@ -199,12 +285,15 @@ func generatePlaceholders(dbType DBType, startIdx, count int) string {
 			placeholders[i] = "?"
 		}
 	}
-
 	return strings.Join(placeholders, ", ")
 }
 
 // Build constructs the final SQL query string with safely parameterized values.
-func (qb *QueryBuilder) Build() (string, []interface{}) {
+func (qb *QueryBuilder) Build() (string, []interface{}, error) {
+	if qb.err != nil {
+		return "", nil, qb.err
+	}
+
 	var queryBuilder strings.Builder
 
 	// SELECT clause
@@ -231,14 +320,27 @@ func (qb *QueryBuilder) Build() (string, []interface{}) {
 	// LIMIT & OFFSET handling
 	argIdx := len(qb.args) + 1
 	if qb.limit > 0 {
-		queryBuilder.WriteString(fmt.Sprintf(" LIMIT $%d", argIdx))
+		if qb.dbType == PostgreSQL {
+			queryBuilder.WriteString(fmt.Sprintf(" LIMIT $%d", argIdx))
+		}
+
+		if qb.dbType == MariaDB || qb.dbType == Mysql {
+			queryBuilder.WriteString(" LIMIT ?")
+		}
 		qb.args = append(qb.args, qb.limit)
 		argIdx++
 	}
 	if qb.offset > 0 {
-		queryBuilder.WriteString(fmt.Sprintf(" OFFSET $%d", argIdx))
+		if qb.dbType == PostgreSQL {
+			queryBuilder.WriteString(fmt.Sprintf(" OFFSET $%d", argIdx))
+		}
+
+		if qb.dbType == MariaDB || qb.dbType == Mysql {
+			queryBuilder.WriteString(" OFFSET ?")
+		}
+
 		qb.args = append(qb.args, qb.offset)
 	}
 
-	return queryBuilder.String(), qb.args
+	return queryBuilder.String(), qb.args, nil
 }
