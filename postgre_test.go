@@ -17,7 +17,7 @@ func TestPostgresSelect(t *testing.T) {
 	queryString, _ := qb.Build()
 
 	if queryString != resultQueryString {
-		t.Fatalf("[SELECT_TEST] Not Match: %v", queryString)
+		t.Fatalf("[POSTGRE_SELECT_TEST] Not Match: %v", queryString)
 	}
 }
 
@@ -34,10 +34,10 @@ func TestPostgresSelectWhere(t *testing.T) {
 	queryString, args := qb.Build()
 
 	if queryString != resultQueryString {
-		t.Fatalf("[SELECT_TEST] Not Match: %v", queryString)
+		t.Fatalf("[POSTGRE_SELECT_TEST] Not Match: %v", queryString)
 	}
 	if !reflect.DeepEqual(resultArgs, args) {
-		t.Fatalf("[SELECT_TEST] Args Not Match: %v", args)
+		t.Fatalf("[POSTGRE_SELECT_TEST] Args Not Match: %v", args)
 	}
 }
 
@@ -55,10 +55,10 @@ func TestPostgresSelectWhereWithOrderBy(t *testing.T) {
 	queryString, args := qb.Build()
 
 	if queryString != resultQueryString {
-		t.Fatalf("[SELECT_TEST] Not Match: %v", queryString)
+		t.Fatalf("[POSTGRE_SELECT_TEST] Not Match: %v", queryString)
 	}
 	if !reflect.DeepEqual(resultArgs, args) {
-		t.Fatalf("[SELECT_TEST] Args Not Match: %v", args)
+		t.Fatalf("[POSTGRE_SELECT_TEST] Args Not Match: %v", args)
 	}
 }
 
@@ -79,10 +79,10 @@ func TestPostgresSelectPagination(t *testing.T) {
 	queryString, args := qb.Build()
 
 	if queryString != resultQueryString {
-		t.Fatalf("[SELECT_TEST] Not Match: %v", queryString)
+		t.Fatalf("[POSTGRE_SELECT_TEST] Not Match: %v", queryString)
 	}
 
 	if !reflect.DeepEqual(resultArgs, args) {
-		t.Fatalf("[SELECT_TEST] Args Not Match: %v", args)
+		t.Fatalf("[POSTGRE_SELECT_TEST] Args Not Match: %v", args)
 	}
 }
