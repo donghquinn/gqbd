@@ -38,11 +38,11 @@ func TestSelectWhere(t *testing.T) {
 }
 
 func TestSelectWhereWithOrderBy(t *testing.T) {
-	resultQueryString := `SELECT "new_id", "new_name" FROM "new_table" WHERE new_id = $1 ORDER BY "new_seq" DESC`
+	resultQueryString := `SELECT "new_seq", "new_id", "new_name" FROM "new_table" WHERE new_id = $1 ORDER BY "new_seq" DESC`
 
 	resultArgs := []interface{}{"abc123"}
 
-	qb := builder.NewQueryBuilder("postgres", "new_seq", "new_table", "new_id", "new_name").
+	qb := builder.NewQueryBuilder("postgres", "new_table", "new_seq", "new_id", "new_name").
 		Where("new_id = ?", "abc123").
 		OrderBy("new_seq", "DESC", nil)
 
