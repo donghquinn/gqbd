@@ -30,7 +30,7 @@ type QueryBuilder struct {
 	offset     int
 	args       []interface{}
 	distinct   bool
-	err        error // 내부 에러를 저장하는 필드 추가
+	err        error
 }
 
 var placeholderRegexp = regexp.MustCompile(`\$(\d+)`)
@@ -238,7 +238,6 @@ func (qb *QueryBuilder) Offset(offset int) *QueryBuilder {
 }
 
 // BuildInsert constructs an INSERT query using the provided data map.
-// data의 키는 컬럼명, 값은 해당 값으로 사용합니다.
 func (qb *QueryBuilder) BuildInsert(data map[string]interface{}) (string, []interface{}, error) {
 	if qb.err != nil {
 		return "", nil, qb.err
@@ -273,9 +272,7 @@ func (qb *QueryBuilder) BuildInsert(data map[string]interface{}) (string, []inte
 	return query, args, nil
 }
 
-// BuildUpdate constructs an UPDATE query using the provided data map for SET 절.
-// 만약 Where 조건이 체이닝되어 있다면 함께 포함됩니다.
-// (주의: Where 조건에 사용된 플레이스홀더 번호는 단순 연결되므로, 복잡한 상황에서는 별도 처리가 필요할 수 있습니다.)
+// BuildUpdate constructs an UPDATE query using the provided data map
 func (qb *QueryBuilder) BuildUpdate(data map[string]interface{}) (string, []interface{}, error) {
 	if qb.err != nil {
 		return "", nil, qb.err
@@ -305,10 +302,7 @@ func (qb *QueryBuilder) BuildUpdate(data map[string]interface{}) (string, []inte
 
 	query := fmt.Sprintf("UPDATE %s SET %s", qb.table, strings.Join(setClauses, ", "))
 
-	// 만약 WHERE 조건이 존재한다면, 기존 qb.conditions를 사용합니다.
 	if len(qb.conditions) > 0 {
-		// PostgreSQL의 경우, 기존 WHERE 조건은 NewQueryBuilder에서 생성 시 이미 placeholder가 할당되었는데,
-		// 이제 SET 절의 플레이스홀더 개수만큼 offset을 추가해야 합니다.
 		if qb.dbType == PostgreSQL {
 			shiftedConds := make([]string, len(qb.conditions))
 			for i, cond := range qb.conditions {
@@ -318,7 +312,6 @@ func (qb *QueryBuilder) BuildUpdate(data map[string]interface{}) (string, []inte
 		} else {
 			query += " WHERE " + strings.Join(qb.conditions, " AND ")
 		}
-		// 조건의 인자들은 SET 인자 뒤에 이어집니다.
 		updateArgs = append(updateArgs, qb.args...)
 	}
 
@@ -327,8 +320,7 @@ func (qb *QueryBuilder) BuildUpdate(data map[string]interface{}) (string, []inte
 
 func shiftPlaceholders(condition string, offset int) string {
 	return placeholderRegexp.ReplaceAllStringFunc(condition, func(match string) string {
-		// match는 예를 들어 "$1"
-		numStr := match[1:] // "$1" -> "1"
+		numStr := match[1:]
 		num, err := strconv.Atoi(numStr)
 		if err != nil {
 			return match
