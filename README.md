@@ -30,7 +30,7 @@ go get github.com/donghquinn/gqbd
 ```go
 package example
 
-import 	gqbd "github.com/donghquinn/go-query-builder"
+import 	"github.com/donghquinn/gqbd"
 
 func example() {
     dbCon, conErr := database.PostgresConnection()
@@ -69,7 +69,7 @@ func example() {
 ```go
 package example
 
-import 	gqbd "github.com/donghquinn/go-query-builder"
+import 	"github.com/donghquinn/gqbd"
 
 func example() {
     dbCon, conErr := database.MariadbConnection()
