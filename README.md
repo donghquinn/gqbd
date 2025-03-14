@@ -2,7 +2,6 @@
 
 ## Introduction
 * It's Go Query Building package for dynamic queries.
-* You can make Query String simillar way with QueryDsl of Java.
 * It creates prepared statements
     * SQL Injection Concerned.
 * It support Mariadb/Mysql and PostgreSQL so far
