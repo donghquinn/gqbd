@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	gqbd "github.com/donghquinn/go-query-builder"
+	"github.com/donghquinn/gqbd"
 )
 
 func TestPostgresSelect(t *testing.T) {

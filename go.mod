@@ -1,3 +1,3 @@
-module github.com/donghquinn/go-query-builder
+module github.com/donghquinn/gqbd
 
 go 1.24.1
