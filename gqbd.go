@@ -47,7 +47,7 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 	qb := &QueryBuilder{dbType: dbType}
 
 	// 테이블 이름 escape
-	safeTable, err := escapeIdentifier(dbType, table)
+	safeTable, err := EscapeIdentifier(dbType, table)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -57,7 +57,7 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 	// 컬럼들 escape
 	safeColumns := make([]string, len(columns))
 	for i, col := range columns {
-		safeCol, err := escapeIdentifier(dbType, col)
+		safeCol, err := EscapeIdentifier(dbType, col)
 		if err != nil {
 			qb.err = err
 			return qb
@@ -95,7 +95,7 @@ func (qb *QueryBuilder) Aggregate(function, column string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	safeCol, err := escapeIdentifier(qb.dbType, column)
+	safeCol, err := EscapeIdentifier(qb.dbType, column)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -115,7 +115,7 @@ func (qb *QueryBuilder) LeftJoin(joinTable, onCondition string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	safeTable, err := escapeIdentifier(qb.dbType, joinTable)
+	safeTable, err := EscapeIdentifier(qb.dbType, joinTable)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -135,7 +135,7 @@ func (qb *QueryBuilder) InnerJoin(joinTable, onCondition string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	safeTable, err := escapeIdentifier(qb.dbType, joinTable)
+	safeTable, err := EscapeIdentifier(qb.dbType, joinTable)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -155,7 +155,7 @@ func (qb *QueryBuilder) RightJoin(joinTable, onCondition string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	safeTable, err := escapeIdentifier(qb.dbType, joinTable)
+	safeTable, err := EscapeIdentifier(qb.dbType, joinTable)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -192,12 +192,12 @@ func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuild
 	if qb.err != nil {
 		return qb
 	}
-	safeCol, err := escapeIdentifier(qb.dbType, column)
+	safeCol, err := EscapeIdentifier(qb.dbType, column)
 	if err != nil {
 		qb.err = err
 		return qb
 	}
-	placeholders := generatePlaceholders(qb.dbType, len(qb.args)+1, len(values))
+	placeholders := GeneratePlaceholders(qb.dbType, len(qb.args)+1, len(values))
 	qb.conditions = append(qb.conditions, fmt.Sprintf("%s IN (%s)", safeCol, placeholders))
 	qb.args = append(qb.args, values...)
 	return qb
@@ -215,12 +215,12 @@ func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *Que
 	if qb.err != nil {
 		return qb
 	}
-	safeCol, err := escapeIdentifier(qb.dbType, column)
+	safeCol, err := EscapeIdentifier(qb.dbType, column)
 	if err != nil {
 		qb.err = err
 		return qb
 	}
-	placeholders := generatePlaceholders(qb.dbType, len(qb.args)+1, 2)
+	placeholders := GeneratePlaceholders(qb.dbType, len(qb.args)+1, 2)
 	qb.conditions = append(qb.conditions, fmt.Sprintf(" BETWEEN %s AND %s", safeCol, placeholders))
 	qb.args = append(qb.args, start, end)
 	return qb
@@ -237,7 +237,7 @@ func (qb *QueryBuilder) GroupBy(columns ...string) *QueryBuilder {
 		return qb
 	}
 	for _, col := range columns {
-		safeCol, err := escapeIdentifier(qb.dbType, col)
+		safeCol, err := EscapeIdentifier(qb.dbType, col)
 		if err != nil {
 			qb.err = err
 			return qb
@@ -282,7 +282,7 @@ func (qb *QueryBuilder) OrderBy(column, direction string, allowedColumns map[str
 			column = "id"
 		}
 	}
-	safeCol, err := escapeIdentifier(qb.dbType, column)
+	safeCol, err := EscapeIdentifier(qb.dbType, column)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -336,7 +336,7 @@ func (qb *QueryBuilder) BuildInsert(data map[string]interface{}) (string, []inte
 	idx := 1
 
 	for col, val := range data {
-		safeCol, err := escapeIdentifier(qb.dbType, col)
+		safeCol, err := EscapeIdentifier(qb.dbType, col)
 		if err != nil {
 			return "", nil, err
 		}
@@ -374,7 +374,7 @@ func (qb *QueryBuilder) BuildUpdate(data map[string]interface{}) (string, []inte
 	idx := 1
 
 	for col, val := range data {
-		safeCol, err := escapeIdentifier(qb.dbType, col)
+		safeCol, err := EscapeIdentifier(qb.dbType, col)
 		if err != nil {
 			return "", nil, err
 		}
@@ -426,13 +426,13 @@ func shiftPlaceholders(condition string, offset int) string {
 }
 
 /*
-escapeIdentifier
+EscapeIdentifier
 
 @ dbType: Database type (PostgreSQL, MariaDB, Mysql)
 @ name: Identifier to escape
 @ Return: Escaped identifier and error if any
 */
-func escapeIdentifier(dbType DBType, name string) (string, error) {
+func EscapeIdentifier(dbType DBType, name string) (string, error) {
 	if name == "*" {
 		return name, nil
 	}
@@ -494,7 +494,7 @@ generatePlaceholders
 @ count: Number of placeholders to generate
 @ Return: String of placeholders separated by comma
 */
-func generatePlaceholders(dbType DBType, startIdx, count int) string {
+func GeneratePlaceholders(dbType DBType, startIdx, count int) string {
 	placeholders := make([]string, count)
 	for i := 0; i < count; i++ {
 		if dbType == PostgreSQL {
