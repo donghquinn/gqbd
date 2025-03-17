@@ -14,7 +14,7 @@ BuildSelect
 @ Return: Final SELECT query string, arguments slice, and error if any
 */
 func TestBuildSelectPostgreSQL(t *testing.T) {
-	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "table_name", "col1", "col2").
+	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "table_name", "col1").
 		Where("col1 = ?", 100).
 		OrderBy("col1", "ASC", nil).
 		Limit(10).
@@ -24,8 +24,9 @@ func TestBuildSelectPostgreSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Logf("Query String :%s", query)
 
-	expectedQuery := "SELECT \"col1\", \"col2\" FROM \"table_name\" WHERE col1 = $1 ORDER BY \"col1\" ASC LIMIT $2 OFFSET $3"
+	expectedQuery := "SELECT \"col1\" FROM \"table_name\" WHERE col1 = $1 ORDER BY \"col1\" ASC LIMIT $2 OFFSET $3"
 	normalizedQuery := strings.Join(strings.Fields(query), " ")
 	normalizedExpected := strings.Join(strings.Fields(expectedQuery), " ")
 	if normalizedQuery != normalizedExpected {

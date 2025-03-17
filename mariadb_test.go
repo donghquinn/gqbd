@@ -25,6 +25,8 @@ func TestBuildSelectMariaDB(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	t.Logf("Query String :%s", query)
+
 	expectedQuery := "SELECT `col1`, `col2` FROM `table_name` WHERE col1 = ? ORDER BY `col1` ASC LIMIT ? OFFSET ?"
 	normalizedQuery := strings.Join(strings.Fields(query), " ")
 	normalizedExpected := strings.Join(strings.Fields(expectedQuery), " ")
@@ -53,6 +55,8 @@ func TestBuildInsertMariaDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Logf("Query String :%s", query)
+
 	// INSERT INTO `table_name` (col 순서는 map 순회에 따라 달라질 수 있음)
 	if !strings.HasPrefix(query, "INSERT INTO `table_name`") {
 		t.Errorf("expected query to start with INSERT INTO `table_name`, got %s", query)
@@ -79,6 +83,8 @@ func TestBuildUpdateMariaDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	t.Logf("Query String :%s", query)
+
 	expectedPrefix := "UPDATE `table_name` SET "
 	if !strings.HasPrefix(query, expectedPrefix) {
 		t.Errorf("expected query to start with %s, got %s", expectedPrefix, query)

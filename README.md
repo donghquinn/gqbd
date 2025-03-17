@@ -27,6 +27,8 @@ go get github.com/donghquinn/gqbd
 ### Postgres
 * It uses $N for prepared statment
 
+##### SELECT
+
 ```go
 package example
 
@@ -40,10 +42,13 @@ func example() {
     */
 
     // Arguments: DB Type, Table Name, Columns...
-    qb := gqbd.NewQueryBuilder("postgres", "example_table", "exam_id", "exam_name").
-        Where("exam_name = ?", "data")
-    
-    queryString, args, buildErr := qb.Build()
+	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "table_name", "col1").
+		Where("col1 = ?", 100).
+		OrderBy("col1", "ASC", nil).
+		Limit(10).
+		Offset(5)
+
+	queryString, args, err := qb.Build()
 
     /*
         @@ Query String Result @@
@@ -60,11 +65,39 @@ func example() {
         Query Result Error Handling
     */
 }
-
 ```
+##### INSERT
+
+```go
+	data := map[string]interface{}{
+		"col1": 200,
+		"col2": "test",
+	}
+	qb := gqbd.BuildInsert(gqbd.PostgreSQL, "table_name").
+		Values(data).
+		Returning("col1")
+	query, args, err := qb.Build()
+```
+
+
+##### UPDATE
+ 
+```go
+data := map[string]interface{}{
+		"col1": 300,
+		"col2": "update",
+	}
+	qb := gqbd.BuildUpdate(gqbd.PostgreSQL, "table_name").
+		Set(data).
+		Where("col1 = ?", 100)
+	query, args, err := qb.Build()
+```
+
 
 ### Mysql / Mariadb
 * It uses ? for prepared statment
+
+##### SELECT
 
 ```go
 package example
@@ -79,9 +112,12 @@ func example() {
     */
 
     // Arguments: DB Type, Table Name, Columns...
-    qb := gqbd.NewQueryBuilder("mariadb", "example_table", "exam_id", "exam_name").
-        Where("exam_name = ?", "data")
-    
+	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "table_name", "col1").
+		Where("col1 = ?", 100).
+		OrderBy("col1", "ASC", nil).
+		Limit(10).
+		Offset(5)
+
     queryString, args, buildErr := qb.Build()
 
     /*
@@ -99,5 +135,32 @@ func example() {
         Query Result Error Handling
     */
 }
+
+```
+
+##### UPDATE
+
+```go
+data := map[string]interface{}{
+		"col1": 300,
+		"col2": "update",
+	}
+	qb := gqbd.BuildUpdate(gqbd.MariaDB, "table_name").
+		Set(data).
+		Where("col1 = ?", 100)
+	query, args, err := qb.Build()
+```
+
+##### INSERT
+
+```go
+	data := map[string]interface{}{
+		"col1": 200,
+		"col2": "test",
+	}
+	qb := gqbd.BuildInsert(gqbd.MariaDB, "table_name").
+		Values(data)
+
+	query, args, err := qb.Build()
 
 ```
