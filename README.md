@@ -66,6 +66,60 @@ func example() {
     */
 }
 ```
+
+#### Dynamic Where Expression
+
+```go
+package example
+
+import 	"github.com/donghquinn/gqbd"
+
+func example() {
+    dbCon, conErr := database.PostgresConnection()
+
+    /*
+        Logics
+    */
+
+    // Arguments: DB Type, Table Name, Columns...
+	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "example_table e", "e.id", "e.name", "u.user").
+		LeftJoin("user_table u", "u.user_id = e.id")
+
+	if userName != "" {
+		qb = qb.Where("u.user_name LIKE ?", "%"+userName+"%")
+	}
+
+	// title이 비어있지 않은 경우에만 조건 추가
+	if title != "" {
+		qb = qb.Where("e.name LIKE ?", "%"+title+"%")
+	}
+	// 상태 조건은 항상 추가
+	qb = qb.Where("e.example_status = ?", "1")
+
+	// 정렬, 오프셋, 제한 설정
+	qb = qb.OrderBy(orderByColumn, "DESC", nil).
+		Offset(offset).
+		Limit(limit)
+
+	queryString, args, err := qb.Build()
+
+    /*
+        @@ Query String Result @@
+        SELECT exam_id, exam_name
+        FROM example_table
+        WHERE exam_name = $1
+
+        @@ Query Arguments @@
+        "data"
+    */
+    queryResult, queryErr := dbCon.QueryRows(queryString, args)
+     
+    /*
+        Query Result Error Handling
+    */
+}
+```
+
 ##### INSERT
 
 ```go
@@ -136,6 +190,60 @@ func example() {
     */
 }
 
+```
+
+
+#### Dynamic Where Expression
+
+```go
+package example
+
+import 	"github.com/donghquinn/gqbd"
+
+func example() {
+    dbCon, conErr := database.PostgresConnection()
+
+    /*
+        Logics
+    */
+
+    // Arguments: DB Type, Table Name, Columns...
+	qb := gqbd.BuildSelect(gqbd.Mariadb, "example_table e", "e.id", "e.name", "u.user").
+		LeftJoin("user_table u", "u.user_id = e.id")
+
+	if userName != "" {
+		qb = qb.Where("u.user_name LIKE ?", "%"+userName+"%")
+	}
+
+	// title이 비어있지 않은 경우에만 조건 추가
+	if title != "" {
+		qb = qb.Where("e.name LIKE ?", "%"+title+"%")
+	}
+	// 상태 조건은 항상 추가
+	qb = qb.Where("e.example_status = ?", "1")
+
+	// 정렬, 오프셋, 제한 설정
+	qb = qb.OrderBy(orderByColumn, "DESC", nil).
+		Offset(offset).
+		Limit(limit)
+
+	queryString, args, err := qb.Build()
+
+    /*
+        @@ Query String Result @@
+        SELECT exam_id, exam_name
+        FROM example_table
+        WHERE exam_name = $1
+
+        @@ Query Arguments @@
+        "data"
+    */
+    queryResult, queryErr := dbCon.QueryRows(queryString, args)
+     
+    /*
+        Query Result Error Handling
+    */
+}
 ```
 
 ##### UPDATE

@@ -279,6 +279,33 @@ func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *Que
 }
 
 /*
+AddWhereIfNotEmpty
+
+@ column: Column name
+@ value: arguments
+@ Return: *QueryBuilder
+*/
+func (qb *QueryBuilder) AddWhereIfNotEmpty(condition string, value interface{}) *QueryBuilder {
+	if value == nil {
+		return qb
+	}
+
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return qb
+		}
+	case *string:
+		if v == nil || *v == "" {
+			return qb
+		}
+		// 필요에 따라 다른 타입도 처리
+	}
+
+	return qb.Where(condition, value)
+}
+
+/*
 GroupBy
 
 @ columns: Columns for GROUP BY clause
@@ -590,12 +617,22 @@ func EscapeIdentifier(dbType DBType, name string) (string, error) {
 	if name == "*" {
 		return name, nil
 	}
-	if dbType == PostgreSQL {
-		return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`)), nil
+
+	// 빈 문자열 검사 추가
+	if name == "" {
+		return "", fmt.Errorf("empty identifier not allowed")
 	}
+
+	// PostgreSQL에서 따옴표 사용하지 않음
+	if dbType == PostgreSQL {
+		// return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`)), nil
+		return name, nil // 따옴표 없이 그대로 반환
+	}
+
 	if dbType == MariaDB || dbType == Mysql {
 		return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``")), nil
 	}
+
 	return "", fmt.Errorf("unsupported db type: %v", dbType)
 }
 
