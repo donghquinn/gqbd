@@ -279,6 +279,33 @@ func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *Que
 }
 
 /*
+AddWhereIfNotEmpty
+
+@ column: Column name
+@ value: arguments
+@ Return: *QueryBuilder
+*/
+func (qb *QueryBuilder) AddWhereIfNotEmpty(condition string, value interface{}) *QueryBuilder {
+	if value == nil {
+		return qb
+	}
+
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return qb
+		}
+	case *string:
+		if v == nil || *v == "" {
+			return qb
+		}
+		// 필요에 따라 다른 타입도 처리
+	}
+
+	return qb.Where(condition, value)
+}
+
+/*
 GroupBy
 
 @ columns: Columns for GROUP BY clause
