@@ -617,12 +617,22 @@ func EscapeIdentifier(dbType DBType, name string) (string, error) {
 	if name == "*" {
 		return name, nil
 	}
-	if dbType == PostgreSQL {
-		return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`)), nil
+
+	// 빈 문자열 검사 추가
+	if name == "" {
+		return "", fmt.Errorf("empty identifier not allowed")
 	}
+
+	// PostgreSQL에서 따옴표 사용하지 않음
+	if dbType == PostgreSQL {
+		// return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`)), nil
+		return name, nil // 따옴표 없이 그대로 반환
+	}
+
 	if dbType == MariaDB || dbType == Mysql {
 		return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``")), nil
 	}
+
 	return "", fmt.Errorf("unsupported db type: %v", dbType)
 }
 
