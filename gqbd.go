@@ -273,7 +273,12 @@ func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *Que
 		return qb
 	}
 	placeholders := GeneratePlaceholders(qb.dbType, len(qb.args)+1, 2)
-	qb.conditions = append(qb.conditions, fmt.Sprintf(" BETWEEN %s AND %s", safeCol, placeholders))
+	placeholderSlices := strings.Split(placeholders, ", ")
+	if len(placeholderSlices) != 2 {
+		qb.err = fmt.Errorf("failed to generate placeholders for BETWEEN")
+		return qb
+	}
+	qb.conditions = append(qb.conditions, fmt.Sprintf("%s BETWEEN %s AND %s", safeCol, placeholderSlices[0], placeholderSlices[1]))
 	qb.args = append(qb.args, start, end)
 	return qb
 }
@@ -490,22 +495,12 @@ func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 	if qb.orderBy != "" {
 		queryBuilder.WriteString(" ORDER BY " + qb.orderBy)
 	}
-	argIdx := len(qb.args) + 1
 	if qb.limit > 0 {
-		if qb.dbType == PostgreSQL {
-			queryBuilder.WriteString(fmt.Sprintf(" LIMIT $%d", argIdx))
-		} else {
-			queryBuilder.WriteString(" LIMIT ?")
-		}
+		queryBuilder.WriteString(" LIMIT ?")
 		qb.args = append(qb.args, qb.limit)
-		argIdx++
 	}
 	if qb.offset > 0 {
-		if qb.dbType == PostgreSQL {
-			queryBuilder.WriteString(fmt.Sprintf(" OFFSET $%d", argIdx))
-		} else {
-			queryBuilder.WriteString(" OFFSET ?")
-		}
+		queryBuilder.WriteString(" OFFSET ?")
 		qb.args = append(qb.args, qb.offset)
 	}
 	return queryBuilder.String(), qb.args, nil
@@ -518,20 +513,14 @@ func (qb *QueryBuilder) buildInsert() (string, []interface{}, error) {
 	var cols []string
 	var placeholders []string
 	var args []interface{}
-	idx := 1
 	for col, val := range qb.data {
 		safeCol, err := EscapeIdentifier(qb.dbType, col)
 		if err != nil {
 			return "", nil, err
 		}
 		cols = append(cols, safeCol)
-		if qb.dbType == PostgreSQL {
-			placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
-		} else {
-			placeholders = append(placeholders, "?")
-		}
+		placeholders = append(placeholders, "?")
 		args = append(args, val)
-		idx++
 	}
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 	if qb.dbType == PostgreSQL && qb.returning != "" {
@@ -546,33 +535,17 @@ func (qb *QueryBuilder) buildUpdate() (string, []interface{}, error) {
 	}
 	var setClauses []string
 	var updateArgs []interface{}
-	idx := 1
 	for col, val := range qb.data {
 		safeCol, err := EscapeIdentifier(qb.dbType, col)
 		if err != nil {
 			return "", nil, err
 		}
-		var placeholder string
-		if qb.dbType == PostgreSQL {
-			placeholder = fmt.Sprintf("$%d", idx)
-		} else {
-			placeholder = "?"
-		}
-		setClauses = append(setClauses, fmt.Sprintf("%s = %s", safeCol, placeholder))
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", safeCol))
 		updateArgs = append(updateArgs, val)
-		idx++
 	}
 	query := fmt.Sprintf("UPDATE %s SET %s", qb.table, strings.Join(setClauses, ", "))
 	if len(qb.conditions) > 0 {
-		if qb.dbType == PostgreSQL {
-			shiftedConds := make([]string, len(qb.conditions))
-			for i, cond := range qb.conditions {
-				shiftedConds[i] = shiftPlaceholders(cond, len(qb.data))
-			}
-			query += " WHERE " + strings.Join(shiftedConds, " AND ")
-		} else {
-			query += " WHERE " + strings.Join(qb.conditions, " AND ")
-		}
+		query += " WHERE " + strings.Join(qb.conditions, " AND ")
 		updateArgs = append(updateArgs, qb.args...)
 	}
 	return query, updateArgs, nil
@@ -623,17 +596,8 @@ func EscapeIdentifier(dbType DBType, name string) (string, error) {
 		return "", fmt.Errorf("empty identifier not allowed")
 	}
 
-	// PostgreSQL에서 따옴표 사용하지 않음
-	if dbType == PostgreSQL {
-		// return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`)), nil
-		return name, nil // 따옴표 없이 그대로 반환
-	}
-
-	if dbType == MariaDB || dbType == Mysql {
-		return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``")), nil
-	}
-
-	return "", fmt.Errorf("unsupported db type: %v", dbType)
+	// 모든 데이터베이스 타입에 대해 백틱 없이 그대로 반환
+	return name, nil
 }
 
 /*
@@ -659,8 +623,8 @@ ReplacePlaceholders
 @ Return: Condition string with replaced placeholders
 */
 func ReplacePlaceholders(dbType DBType, condition string, startIdx int) string {
-	if dbType == MariaDB {
-		return condition // MariaDB uses "?" directly
+	if dbType == MariaDB || dbType == Mysql {
+		return condition // MariaDB/MySQL uses "?" directly
 	}
 	var result strings.Builder
 	placeholderCount := startIdx
