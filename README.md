@@ -112,7 +112,7 @@ func example() {
         @@ Query Arguments @@
         "data"
     */
-    queryResult, queryErr := dbCon.QueryRows(queryString, args)
+    queryResult, queryErr := dbCon.QueryBuilderRows(queryString, args)
      
     /*
         Query Result Error Handling
@@ -159,14 +159,14 @@ package example
 import 	"github.com/donghquinn/gqbd"
 
 func example() {
-    dbCon, conErr := database.MariadbConnection()
+    dbCon, conErr := gqbd.MariadbConnection()
 
     /*
         Logics
     */
 
     // Arguments: DB Type, Table Name, Columns...
-	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "table_name", "col1").
+	qb := gqbd.BuildSelect(gqbd.MariaDB, "table_name", "col1").
 		Where("col1 = ?", 100).
 		OrderBy("col1", "ASC", nil).
 		Limit(10).
@@ -183,7 +183,7 @@ func example() {
         @@ Query Arguments @@
         "data"
     */
-    queryResult, queryErr := dbCon.QueryRows(queryString, args)
+    queryResult, queryErr := dbCon.QueryBuilderRows(queryString, args)
      
     /*
         Query Result Error Handling
@@ -201,14 +201,14 @@ package example
 import 	"github.com/donghquinn/gqbd"
 
 func example() {
-    dbCon, conErr := database.PostgresConnection()
+    dbCon, conErr := gqbd.PostgresConnection()
 
     /*
         Logics
     */
 
     // Arguments: DB Type, Table Name, Columns...
-	qb := gqbd.BuildSelect(gqbd.Mariadb, "example_table e", "e.id", "e.name", "u.user").
+	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "example_table e", "e.id", "e.name", "u.user").
 		LeftJoin("user_table u", "u.user_id = e.id")
 
 	if userName != "" {
@@ -238,7 +238,7 @@ func example() {
         @@ Query Arguments @@
         "data"
     */
-    queryResult, queryErr := dbCon.QueryRows(queryString, args)
+    queryResult, queryErr := dbCon.QueryBuilderRows(queryString, args)
      
     /*
         Query Result Error Handling
