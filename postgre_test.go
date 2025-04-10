@@ -36,6 +36,7 @@ func TestBuildSelectPostgreSQL(t *testing.T) {
 	if !reflect.DeepEqual(args, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, args)
 	}
+
 }
 
 /*
