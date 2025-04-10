@@ -35,7 +35,7 @@ package example
 import 	"github.com/donghquinn/gqbd"
 
 func example() {
-    dbCon, conErr := gqbd.PostgresConnection()
+    dbCon, conErr := database.PostgresConnection()
 
     /*
         Logics
@@ -75,7 +75,7 @@ package example
 import 	"github.com/donghquinn/gqbd"
 
 func example() {
-    dbCon, conErr := gqbd.PostgresConnection()
+    dbCon, conErr := database.PostgresConnection()
 
     /*
         Logics
@@ -159,7 +159,7 @@ package example
 import 	"github.com/donghquinn/gqbd"
 
 func example() {
-    dbCon, conErr := gqbd.MariadbConnection()
+    dbCon, conErr := database.MariadbConnection()
 
     /*
         Logics
@@ -201,7 +201,7 @@ package example
 import 	"github.com/donghquinn/gqbd"
 
 func example() {
-    dbCon, conErr := gqbd.PostgresConnection()
+    dbCon, conErr := database.PostgresConnection()
 
     /*
         Logics
