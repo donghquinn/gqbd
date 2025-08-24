@@ -299,7 +299,3 @@ func BenchmarkQueryBuilder(b *testing.B) {
 ## Contributing
 
 Feel free to open issues or submit pull requests. Planning to add support for SQLite and other databases.
-
-## License
-
-MIT License - use freely in commercial and open-source projects.
