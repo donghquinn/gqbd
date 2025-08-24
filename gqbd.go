@@ -15,6 +15,18 @@ const (
 	SQLite     DBType = "sqlite"
 )
 
+// DBConfig holds database connection configuration
+type DBConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	DBName   string
+	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full
+	Charset  string // For MySQL/MariaDB: utf8, utf8mb4, etc.
+	FilePath string // For SQLite: path to database file
+}
+
 // QueryBuilder is a high-performance SQL query builder with zero allocations.
 // Designed for building dynamic queries safely without database connections.
 type QueryBuilder struct {
@@ -632,4 +644,97 @@ func GeneratePlaceholders(dbType DBType, startIdx, count int) string {
 		}
 	}
 	return strings.Join(placeholders, ", ")
+}
+
+// BuildConnectionString creates a database connection string for sql.Open()
+// based on the database type and configuration.
+//
+// Examples:
+//   config := gqbd.DBConfig{
+//       Host: "localhost", Port: 5432, User: "postgres", 
+//       Password: "password", DBName: "mydb", SSLMode: "disable"
+//   }
+//   dsn := gqbd.BuildConnectionString(gqbd.PostgreSQL, config)
+func BuildConnectionString(dbType DBType, config DBConfig) string {
+	switch dbType {
+	case PostgreSQL:
+		return buildPostgreSQLConnectionString(config)
+	case MariaDB, Mysql:
+		return buildMySQLConnectionString(config)
+	case SQLite:
+		return buildSQLiteConnectionString(config)
+	default:
+		return buildMySQLConnectionString(config)
+	}
+}
+
+func buildPostgreSQLConnectionString(config DBConfig) string {
+	var parts []string
+	
+	if config.Host != "" {
+		parts = append(parts, "host="+config.Host)
+	}
+	if config.Port > 0 {
+		parts = append(parts, fmt.Sprintf("port=%d", config.Port))
+	}
+	if config.User != "" {
+		parts = append(parts, "user="+config.User)
+	}
+	if config.Password != "" {
+		parts = append(parts, "password="+config.Password)
+	}
+	if config.DBName != "" {
+		parts = append(parts, "dbname="+config.DBName)
+	}
+	if config.SSLMode != "" {
+		parts = append(parts, "sslmode="+config.SSLMode)
+	} else {
+		parts = append(parts, "sslmode=disable")
+	}
+	
+	return strings.Join(parts, " ")
+}
+
+func buildMySQLConnectionString(config DBConfig) string {
+	var dsn strings.Builder
+	
+	if config.User != "" {
+		dsn.WriteString(config.User)
+	}
+	if config.Password != "" {
+		dsn.WriteString(":" + config.Password)
+	}
+	dsn.WriteString("@")
+	
+	if config.Host != "" {
+		dsn.WriteString("tcp(" + config.Host)
+		if config.Port > 0 {
+			dsn.WriteString(fmt.Sprintf(":%d", config.Port))
+		}
+		dsn.WriteString(")")
+	}
+	
+	if config.DBName != "" {
+		dsn.WriteString("/" + config.DBName)
+	}
+	
+	var params []string
+	if config.Charset != "" {
+		params = append(params, "charset="+config.Charset)
+	}
+	params = append(params, "parseTime=True")
+	params = append(params, "loc=Local")
+	
+	if len(params) > 0 {
+		dsn.WriteString("?" + strings.Join(params, "&"))
+	}
+	
+	return dsn.String()
+}
+
+func buildSQLiteConnectionString(config DBConfig) string {
+	if config.FilePath != "" {
+		return config.FilePath
+	}
+	return ":memory:"
 }
