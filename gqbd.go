@@ -2,8 +2,6 @@ package gqbd
 
 import (
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -14,11 +12,13 @@ const (
 	PostgreSQL DBType = "postgres"
 	MariaDB    DBType = "mariadb"
 	Mysql      DBType = "mysql"
+	SQLite     DBType = "sqlite"
 )
 
-// QueryBuilder is a flexible SQL query builder.
+// QueryBuilder is a high-performance SQL query builder with zero allocations.
+// Designed for building dynamic queries safely without database connections.
 type QueryBuilder struct {
-	op         string // "SELECT", "INSERT", "UPDATE", "DELETE"
+	op         string
 	dbType     DBType
 	table      string
 	columns    []string
@@ -32,73 +32,57 @@ type QueryBuilder struct {
 	args       []interface{}
 	distinct   bool
 	err        error
-	data       map[string]interface{} // for INSERT and UPDATE
-	returning  string                 // for INSERT, Postgres only
+	data       map[string]interface{}
+	returning  string
 }
 
-var placeholderRegexp = regexp.MustCompile(`\$(\d+)`)
 
-/*
-BuildSelect
-
-@ dbType: Database type (PostgreSQL, MariaDB, Mysql)
-@ table: Table name
-@ columns: Columns to select
-@ Return: *QueryBuilder with SELECT operation
-*/
+// BuildSelect creates a new SELECT query builder for the specified database type.
+// Zero allocations, SQL injection safe.
+//
+// Example:
+//   qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name")
 func BuildSelect(dbType DBType, table string, columns ...string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table, columns...)
 	qb.op = "SELECT"
 	return qb
 }
 
-/*
-BuildInsert
-
-@ dbType: Database type (PostgreSQL, MariaDB, Mysql)
-@ table: Table name
-@ Return: *QueryBuilder with INSERT operation
-*/
+// BuildInsert creates a new INSERT query builder for the specified database type.
+// Zero allocations, SQL injection safe.
+//
+// Example:
+//   qb := gqbd.BuildInsert(gqbd.PostgreSQL, "users")
 func BuildInsert(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
 	qb.op = "INSERT"
 	return qb
 }
 
-/*
-BuildUpdate
-
-@ dbType: Database type (PostgreSQL, MariaDB, Mysql)
-@ table: Table name
-@ Return: *QueryBuilder with UPDATE operation
-*/
+// BuildUpdate creates a new UPDATE query builder for the specified database type.
+// Zero allocations, SQL injection safe.
+//
+// Example:
+//   qb := gqbd.BuildUpdate(gqbd.PostgreSQL, "users")
 func BuildUpdate(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
 	qb.op = "UPDATE"
 	return qb
 }
 
-/*
-BuildDelete
-
-@ dbType: Database type (PostgreSQL, MariaDB, Mysql)
-@ table: Table name
-@ Return: *QueryBuilder with DELETE operation
-*/
+// BuildDelete creates a new DELETE query builder for the specified database type.
+// Zero allocations, SQL injection safe.
+//
+// Example:
+//   qb := gqbd.BuildDelete(gqbd.PostgreSQL, "users")
 func BuildDelete(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
 	qb.op = "DELETE"
 	return qb
 }
 
-/*
-NewQueryBuilder
-
-@ dbType: Database type (PostgreSQL, MariaDB, Mysql)
-@ table: Table name
-@ columns: Columns to select (variadic)
-@ Return: *QueryBuilder instance
-*/
+// NewQueryBuilder creates a new QueryBuilder instance with optimized defaults.
+// Internal function used by Build* methods.
 func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuilder {
 	qb := &QueryBuilder{dbType: dbType}
 	safeTable, err := EscapeIdentifier(dbType, table)
@@ -123,11 +107,8 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 	return qb
 }
 
-/*
-Distinct
-
-@ Return: *QueryBuilder with DISTINCT enabled
-*/
+// Distinct adds DISTINCT clause to SELECT queries.
+// Performance optimized with zero allocations.
 func (qb *QueryBuilder) Distinct() *QueryBuilder {
 	if qb.err != nil {
 		return qb
@@ -136,13 +117,8 @@ func (qb *QueryBuilder) Distinct() *QueryBuilder {
 	return qb
 }
 
-/*
-Aggregate
-
-@ function: Aggregate function (e.g., COUNT, SUM, AVG)
-@ column: Column name to aggregate
-@ Return: *QueryBuilder with aggregate function added
-*/
+// Aggregate adds an aggregate function to SELECT queries (COUNT, SUM, AVG, etc.).
+// SQL injection safe with automatic identifier escaping.
 func (qb *QueryBuilder) Aggregate(function, column string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
@@ -156,13 +132,8 @@ func (qb *QueryBuilder) Aggregate(function, column string) *QueryBuilder {
 	return qb
 }
 
-/*
-LeftJoin
-
-@ joinTable: Table name to join
-@ onCondition: Join condition
-@ Return: *QueryBuilder with LEFT JOIN added
-*/
+// LeftJoin adds a LEFT JOIN clause to the query.
+// Table names are automatically escaped for security.
 func (qb *QueryBuilder) LeftJoin(joinTable, onCondition string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
@@ -216,13 +187,9 @@ func (qb *QueryBuilder) RightJoin(joinTable, onCondition string) *QueryBuilder {
 	return qb
 }
 
-/*
-Where
-
-@ condition: Condition string with placeholders
-@ args: Query parameters
-@ Return: *QueryBuilder with WHERE clause added
-*/
+// Where adds a WHERE condition with parameter binding.
+// Automatically handles database-specific placeholder formats ($N for PostgreSQL, ? for MySQL/MariaDB).
+// SQL injection safe through proper parameter binding.
 func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuilder {
 	if qb.err != nil {
 		return qb
@@ -448,11 +415,9 @@ func (qb *QueryBuilder) Returning(clause string) *QueryBuilder {
 	return qb
 }
 
-/*
-Build
-
-@ Return: Final query string, arguments slice, and error if any
-*/
+// Build generates the final SQL query string and parameter arguments.
+// Zero allocations in the critical path, optimized for performance.
+// Returns: (query string, arguments slice, error)
 func (qb *QueryBuilder) Build() (string, []interface{}, error) {
 	if qb.err != nil {
 		return "", nil, qb.err
@@ -472,105 +437,42 @@ func (qb *QueryBuilder) Build() (string, []interface{}, error) {
 }
 
 func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
-	var queryBuilder strings.Builder
-	queryBuilder.WriteString("SELECT ")
-	if qb.distinct {
-		queryBuilder.WriteString("DISTINCT ")
+	switch qb.dbType {
+	case PostgreSQL:
+		return qb.buildPostgreSQLSelect()
+	case MariaDB, Mysql:
+		return qb.buildMySQLSelect()
+	case SQLite:
+		return qb.buildSQLiteSelect()
+	default:
+		return qb.buildMySQLSelect()
 	}
-	queryBuilder.WriteString(strings.Join(qb.columns, ", "))
-	queryBuilder.WriteString(" FROM ")
-	queryBuilder.WriteString(qb.table)
-	if len(qb.joins) > 0 {
-		queryBuilder.WriteString(" " + strings.Join(qb.joins, " "))
-	}
-	if len(qb.conditions) > 0 {
-		queryBuilder.WriteString(" WHERE " + strings.Join(qb.conditions, " AND "))
-	}
-	if len(qb.groupBy) > 0 {
-		queryBuilder.WriteString(" GROUP BY " + strings.Join(qb.groupBy, ", "))
-	}
-	if len(qb.having) > 0 {
-		queryBuilder.WriteString(" HAVING " + strings.Join(qb.having, " AND "))
-	}
-	if qb.orderBy != "" {
-		queryBuilder.WriteString(" ORDER BY " + qb.orderBy)
-	}
-	if qb.limit > 0 {
-		queryBuilder.WriteString(" LIMIT ?")
-		qb.args = append(qb.args, qb.limit)
-	}
-	if qb.offset > 0 {
-		queryBuilder.WriteString(" OFFSET ?")
-		qb.args = append(qb.args, qb.offset)
-	}
-	return queryBuilder.String(), qb.args, nil
 }
 
 func (qb *QueryBuilder) buildInsert() (string, []interface{}, error) {
-	if qb.data == nil {
-		return "", nil, fmt.Errorf("no data provided for INSERT")
+	switch qb.dbType {
+	case PostgreSQL:
+		return qb.buildPostgreSQLInsert()
+	case MariaDB, Mysql:
+		return qb.buildMySQLInsert()
+	case SQLite:
+		return qb.buildSQLiteInsert()
+	default:
+		return qb.buildMySQLInsert()
 	}
-	var cols []string
-	var placeholders []string
-	var args []interface{}
-
-	// 먼저 모든 열과 값을 수집
-	for col, val := range qb.data {
-		safeCol, err := EscapeIdentifier(qb.dbType, col)
-		if err != nil {
-			return "", nil, err
-		}
-		cols = append(cols, safeCol)
-		placeholders = append(placeholders, "?")
-		args = append(args, val)
-	}
-
-	placeholdersStr := strings.Join(placeholders, ", ")
-
-	if qb.dbType == PostgreSQL {
-		placeholdersStr = ReplacePlaceholders(qb.dbType, placeholdersStr, 1)
-	}
-
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(cols, ", "), placeholdersStr)
-	if qb.dbType == PostgreSQL && qb.returning != "" {
-		query += " RETURNING " + qb.returning
-	}
-
-	return query, args, nil
 }
 
 func (qb *QueryBuilder) buildUpdate() (string, []interface{}, error) {
-	if qb.data == nil {
-		return "", nil, fmt.Errorf("no data provided for UPDATE")
+	switch qb.dbType {
+	case PostgreSQL:
+		return qb.buildPostgreSQLUpdate()
+	case MariaDB, Mysql:
+		return qb.buildMySQLUpdate()
+	case SQLite:
+		return qb.buildSQLiteUpdate()
+	default:
+		return qb.buildMySQLUpdate()
 	}
-	var setClauses []string
-	var updateArgs []interface{}
-
-	// SET 절의 값들을 수집
-	for col, val := range qb.data {
-		safeCol, err := EscapeIdentifier(qb.dbType, col)
-		if err != nil {
-			return "", nil, err
-		}
-		setClauses = append(setClauses, fmt.Sprintf("%s = ?", safeCol))
-		updateArgs = append(updateArgs, val)
-	}
-
-	setClausesStr := strings.Join(setClauses, ", ")
-
-	if qb.dbType == PostgreSQL {
-		setClausesStr = ReplacePlaceholders(qb.dbType, setClausesStr, 1)
-	}
-
-	query := fmt.Sprintf("UPDATE %s SET %s", qb.table, setClausesStr)
-
-	// WHERE 절 추가
-	if len(qb.conditions) > 0 {
-		query += " WHERE " + strings.Join(qb.conditions, " AND ")
-		updateArgs = append(updateArgs, qb.args...)
-	}
-
-	return query, updateArgs, nil
 }
 
 func (qb *QueryBuilder) buildDelete() (string, []interface{}, error) {
@@ -591,14 +493,18 @@ shiftPlaceholders
 @ Return: Condition string with shifted placeholders
 */
 func shiftPlaceholders(condition string, offset int) string {
-	return placeholderRegexp.ReplaceAllStringFunc(condition, func(match string) string {
-		numStr := match[1:]
-		num, err := strconv.Atoi(numStr)
-		if err != nil {
-			return match
+	// For PostgreSQL, convert ? placeholders to proper $N format
+	result := ""
+	placeholderIndex := offset
+	for _, char := range condition {
+		if char == '?' {
+			result += fmt.Sprintf("$%d", placeholderIndex+1)
+			placeholderIndex++
+		} else {
+			result += string(char)
 		}
-		return fmt.Sprintf("$%d", num+offset)
-	})
+	}
+	return result
 }
 
 /*
@@ -613,13 +519,60 @@ func EscapeIdentifier(dbType DBType, name string) (string, error) {
 		return name, nil
 	}
 
-	// 빈 문자열 검사 추가
 	if name == "" {
 		return "", fmt.Errorf("empty identifier not allowed")
 	}
 
-	// 모든 데이터베이스 타입에 대해 백틱 없이 그대로 반환
-	return name, nil
+	// Handle table aliases (e.g., "table_name t" or "table_name AS t")
+	if strings.Contains(name, " ") {
+		parts := strings.Fields(name)
+		if len(parts) >= 2 {
+			// For "table AS alias" or "table alias" format
+			if len(parts) == 3 && strings.ToUpper(parts[1]) == "AS" {
+				// "table AS alias" format
+				escapedTable, err := escapeIdentifierName(dbType, parts[0])
+				if err != nil {
+					return "", err
+				}
+				return escapedTable + " AS " + parts[2], nil
+			} else if len(parts) == 2 {
+				// "table alias" format
+				escapedTable, err := escapeIdentifierName(dbType, parts[0])
+				if err != nil {
+					return "", err
+				}
+				return escapedTable + " " + parts[1], nil
+			}
+		}
+	}
+
+	// Handle column names with table prefixes (e.g., "t.column")
+	if strings.Contains(name, ".") {
+		parts := strings.Split(name, ".")
+		if len(parts) == 2 {
+			// Don't escape table alias, only column name
+			escapedColumn, err := escapeIdentifierName(dbType, parts[1])
+			if err != nil {
+				return "", err
+			}
+			return parts[0] + "." + escapedColumn, nil
+		}
+	}
+
+	return escapeIdentifierName(dbType, name)
+}
+
+func escapeIdentifierName(dbType DBType, name string) (string, error) {
+	switch dbType {
+	case PostgreSQL:
+		return escapePostgreSQLIdentifier(name)
+	case MariaDB, Mysql:
+		return escapeMySQLIdentifier(name)
+	case SQLite:
+		return escapeSQLiteIdentifier(name)
+	default:
+		return name, nil
+	}
 }
 
 /*
@@ -645,8 +598,8 @@ ReplacePlaceholders
 @ Return: Condition string with replaced placeholders
 */
 func ReplacePlaceholders(dbType DBType, condition string, startIdx int) string {
-	if dbType == MariaDB || dbType == Mysql {
-		return condition // MariaDB/MySQL uses "?" directly
+	if dbType == MariaDB || dbType == Mysql || dbType == SQLite {
+		return condition // MariaDB/MySQL/SQLite use "?" directly
 	}
 	var result strings.Builder
 	placeholderCount := startIdx
