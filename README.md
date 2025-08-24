@@ -6,7 +6,7 @@
 ✨ **Key Features:**
 - 🚀 **Zero allocations** in critical query building paths
 - 🔒 **SQL injection safe** with automatic parameter binding and identifier escaping  
-- 🎯 **Multi-database support**: PostgreSQL, MySQL, MariaDB
+- 🎯 **Multi-database support**: PostgreSQL, MySQL, MariaDB, SQLite
 - ⚡ **Performance optimized** - designed for high-throughput applications
 - 📦 **Zero dependencies** - pure Go implementation
 - 🔧 **Fluent API** - chainable method design for readable code
@@ -32,7 +32,8 @@ go get github.com/donghquinn/gqbd
 - ✅ **DELETE**: Safe deletion with WHERE conditions
 - ✅ **Advanced Clauses**: IN, BETWEEN, aggregate functions, DISTINCT
 - ✅ **Security**: Automatic SQL injection prevention
-- ✅ **Cross-Database**: PostgreSQL ($N), MySQL/MariaDB (?) placeholder formats
+- ✅ **Cross-Database**: PostgreSQL ($N), MySQL/MariaDB/SQLite (?) placeholder formats
+- ✅ **Connection Strings**: Built-in database connection string generation
 
 ## Quick Start
 
@@ -182,6 +183,170 @@ query, args, err := qb.Build()
 // Args: [New Product 99.99 5]
 ```
 
+### SQLite Examples
+
+SQLite uses `?` parameter placeholders and double quotes for identifiers, with support for RETURNING clause.
+
+#### SELECT Query
+
+```go
+qb := gqbd.BuildSelect(gqbd.SQLite, "users", "id", "name", "email").
+    Where("age > ?", 18).
+    Where("status = ?", "active").
+    OrderBy("created_at", "DESC", nil).
+    Limit(10).
+    Offset(5)
+
+query, args, err := qb.Build()
+// Query: SELECT "id", "name", "email" FROM "users" WHERE age > ? AND status = ? ORDER BY "created_at" DESC LIMIT ? OFFSET ?
+// Args: [18 active 10 5]
+```
+
+#### INSERT with RETURNING
+
+```go
+data := map[string]interface{}{
+    "name":  "Alice",
+    "email": "alice@example.com",
+    "age":   28,
+}
+
+qb := gqbd.BuildInsert(gqbd.SQLite, "users").
+    Values(data).
+    Returning("id, name")
+
+query, args, err := qb.Build()
+// Query: INSERT INTO "users" ("name", "email", "age") VALUES (?, ?, ?) RETURNING id, name
+// Args: [Alice alice@example.com 28]
+```
+
+#### UPDATE Query
+
+```go
+qb := gqbd.BuildUpdate(gqbd.SQLite, "users").
+    Set(map[string]interface{}{
+        "name":   "Updated Name",
+        "status": "inactive",
+    }).
+    Where("id = ?", 1)
+
+query, args, err := qb.Build()
+// Query: UPDATE "users" SET "name" = ?, "status" = ? WHERE id = ?
+// Args: [Updated Name inactive 1]
+```
+
+## Database Connection Strings
+
+GQBD includes built-in support for generating database connection strings for use with `sql.Open()`.
+
+### Connection String Generation
+
+```go
+import "github.com/donghquinn/gqbd"
+
+// PostgreSQL connection string
+pgConfig := gqbd.DBConfig{
+    Host:     "localhost",
+    Port:     5432,
+    User:     "postgres",
+    Password: "postgres",
+    DBName:   "myapp",
+    SSLMode:  "disable",
+}
+pgDSN := gqbd.BuildConnectionString(gqbd.PostgreSQL, pgConfig)
+// Result: "host=localhost port=5432 user=postgres password=postgres dbname=myapp sslmode=disable"
+
+// MySQL connection string
+mysqlConfig := gqbd.DBConfig{
+    Host:     "localhost",
+    Port:     3306,
+    User:     "root",
+    Password: "password",
+    DBName:   "myapp",
+    Charset:  "utf8mb4",
+}
+mysqlDSN := gqbd.BuildConnectionString(gqbd.Mysql, mysqlConfig)
+// Result: "root:password@tcp(localhost:3306)/myapp?charset=utf8mb4&parseTime=True&loc=Local"
+
+// SQLite connection strings
+sqliteConfig := gqbd.DBConfig{
+    FilePath: "/path/to/database.db",
+}
+sqliteDSN := gqbd.BuildConnectionString(gqbd.SQLite, sqliteConfig)
+// Result: "/path/to/database.db"
+
+// SQLite in-memory
+sqliteMemConfig := gqbd.DBConfig{} // Empty config
+sqliteMemDSN := gqbd.BuildConnectionString(gqbd.SQLite, sqliteMemConfig)
+// Result: ":memory:"
+```
+
+### Complete Database Setup Example
+
+```go
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "log"
+    
+    _ "github.com/lib/pq"           // PostgreSQL driver
+    _ "github.com/go-sql-driver/mysql" // MySQL driver  
+    _ "github.com/mattn/go-sqlite3"    // SQLite driver
+    "github.com/donghquinn/gqbd"
+)
+
+func main() {
+    // Configure database connection
+    config := gqbd.DBConfig{
+        Host:     "localhost",
+        Port:     5432,
+        User:     "postgres",
+        Password: "password",
+        DBName:   "myapp",
+        SSLMode:  "disable",
+    }
+    
+    // Generate connection string
+    dsn := gqbd.BuildConnectionString(gqbd.PostgreSQL, config)
+    
+    // Open database connection
+    db, err := sql.Open("postgres", dsn)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+    
+    // Build and execute query
+    qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name", "email").
+        Where("status = ?", "active").
+        OrderBy("name", "ASC", nil).
+        Limit(10)
+    
+    query, args, err := qb.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    rows, err := db.Query(query, args...)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+    
+    // Process results...
+    for rows.Next() {
+        var id int
+        var name, email string
+        if err := rows.Scan(&id, &name, &email); err != nil {
+            log.Fatal(err)
+        }
+        fmt.Printf("ID: %d, Name: %s, Email: %s\n", id, name, email)
+    }
+}
+```
+
 ### Advanced Features
 
 #### IN Clause
@@ -219,44 +384,81 @@ query, args, err := qb.Build()
 // Query: SELECT "customer_id", COUNT("*"), SUM("total") FROM "orders" GROUP BY "customer_id" HAVING COUNT(*) > $1
 ```
 
-## Integration with Database Drivers
+## Database Driver Integration
 
-This package only builds queries - you'll need a database driver to execute them:
+GQBD works with any Go database driver. Here are the recommended drivers for each database type:
+
+### PostgreSQL
+```go
+import _ "github.com/lib/pq"              // Most common
+// OR
+import _ "github.com/jackc/pgx/v5/stdlib" // High performance
+```
+
+### MySQL
+```go
+import _ "github.com/go-sql-driver/mysql"
+```
+
+### SQLite
+```go
+import _ "github.com/mattn/go-sqlite3"
+```
+
+### Example Usage with Drivers
 
 ```go
-// With database/sql and pq (PostgreSQL)
-import (
-    "database/sql"
-    _ "github.com/lib/pq"
-    "github.com/donghquinn/gqbd"
-)
-
-func queryUsers(db *sql.DB, status string) error {
-    qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name", "email").
-        Where("status = ?", status).
-        OrderBy("name", "ASC", nil)
-    
-    query, args, err := qb.Build()
-    if err != nil {
-        return err
+// PostgreSQL example
+func queryPostgreSQL() {
+    config := gqbd.DBConfig{
+        Host: "localhost", Port: 5432, User: "postgres",
+        Password: "password", DBName: "myapp", SSLMode: "disable",
     }
+    dsn := gqbd.BuildConnectionString(gqbd.PostgreSQL, config)
+    db, _ := sql.Open("postgres", dsn)
     
-    rows, err := db.Query(query, args...)
-    if err != nil {
-        return err
-    }
+    qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name")
+    query, args, _ := qb.Where("active = ?", true).Build()
+    rows, _ := db.Query(query, args...)
     defer rows.Close()
+}
+
+// MySQL example  
+func queryMySQL() {
+    config := gqbd.DBConfig{
+        Host: "localhost", Port: 3306, User: "root",
+        Password: "password", DBName: "myapp", Charset: "utf8mb4",
+    }
+    dsn := gqbd.BuildConnectionString(gqbd.Mysql, config)
+    db, _ := sql.Open("mysql", dsn)
     
-    // Process rows...
-    return nil
+    qb := gqbd.BuildSelect(gqbd.Mysql, "users", "id", "name")
+    query, args, _ := qb.Where("active = ?", true).Build()
+    rows, _ := db.Query(query, args...)
+    defer rows.Close()
+}
+
+// SQLite example
+func querySQLite() {
+    config := gqbd.DBConfig{FilePath: "./app.db"}
+    dsn := gqbd.BuildConnectionString(gqbd.SQLite, config)
+    db, _ := sql.Open("sqlite3", dsn)
+    
+    qb := gqbd.BuildSelect(gqbd.SQLite, "users", "id", "name")
+    query, args, _ := qb.Where("active = ?", true).Build()
+    rows, _ := db.Query(query, args...)
+    defer rows.Close()
 }
 ```
 
 ## Supported Database Types
 
-- `gqbd.PostgreSQL` - PostgreSQL with `$N` placeholders and `"` identifiers
-- `gqbd.MariaDB` - MariaDB with `?` placeholders and `` ` `` identifiers  
-- `gqbd.Mysql` - MySQL with `?` placeholders and `` ` `` identifiers
+| Database | Constant | Placeholders | Identifiers | RETURNING Support |
+|----------|----------|--------------|-------------|-------------------|
+| PostgreSQL | `gqbd.PostgreSQL` | `$1, $2, $3...` | `"identifier"` | ✅ Yes |
+| MySQL | `gqbd.Mysql` | `?, ?, ?...` | `` `identifier` `` | ❌ No |
+| MariaDB | `gqbd.MariaDB` | `?, ?, ?...` | `` `identifier` `` | ❌ No |
+| SQLite | `gqbd.SQLite` | `?, ?, ?...` | `"identifier"` | ✅ Yes (3.35.0+) |
 
 ## Performance Comparison
 
@@ -296,6 +498,27 @@ func BenchmarkQueryBuilder(b *testing.B) {
 - Identifier escaping
 - Input validation
 
+📋 **Complete solution**:
+- Query building for all major databases
+- Connection string generation
+- Database-specific optimizations
+- Modular, maintainable code structure
+
+## Project Structure
+
+The codebase is organized for maintainability and database-specific optimizations:
+
+- `gqbd.go` - Main API, shared logic, and database selection
+- `postgres.go` - PostgreSQL-specific query building methods
+- `mariadb.go` - MySQL/MariaDB-specific query building methods  
+- `sqlite.go` - SQLite-specific query building methods
+
+This separation allows for:
+- Database-specific optimizations
+- Clean, maintainable code
+- Easy addition of new database types
+- Consistent API across all databases
+
 ## Contributing
 
-Feel free to open issues or submit pull requests. Planning to add support for SQLite and other databases.
+Feel free to open issues or submit pull requests. All major SQL databases are now supported!
