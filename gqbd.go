@@ -12,6 +12,7 @@ const (
 	PostgreSQL DBType = "postgres"
 	MariaDB    DBType = "mariadb"
 	Mysql      DBType = "mysql"
+	SQLite     DBType = "sqlite"
 )
 
 // QueryBuilder is a high-performance SQL query builder with zero allocations.
@@ -441,6 +442,8 @@ func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 		return qb.buildPostgreSQLSelect()
 	case MariaDB, Mysql:
 		return qb.buildMySQLSelect()
+	case SQLite:
+		return qb.buildSQLiteSelect()
 	default:
 		return qb.buildMySQLSelect()
 	}
@@ -452,6 +455,8 @@ func (qb *QueryBuilder) buildInsert() (string, []interface{}, error) {
 		return qb.buildPostgreSQLInsert()
 	case MariaDB, Mysql:
 		return qb.buildMySQLInsert()
+	case SQLite:
+		return qb.buildSQLiteInsert()
 	default:
 		return qb.buildMySQLInsert()
 	}
@@ -463,6 +468,8 @@ func (qb *QueryBuilder) buildUpdate() (string, []interface{}, error) {
 		return qb.buildPostgreSQLUpdate()
 	case MariaDB, Mysql:
 		return qb.buildMySQLUpdate()
+	case SQLite:
+		return qb.buildSQLiteUpdate()
 	default:
 		return qb.buildMySQLUpdate()
 	}
@@ -561,6 +568,8 @@ func escapeIdentifierName(dbType DBType, name string) (string, error) {
 		return escapePostgreSQLIdentifier(name)
 	case MariaDB, Mysql:
 		return escapeMySQLIdentifier(name)
+	case SQLite:
+		return escapeSQLiteIdentifier(name)
 	default:
 		return name, nil
 	}
@@ -589,8 +598,8 @@ ReplacePlaceholders
 @ Return: Condition string with replaced placeholders
 */
 func ReplacePlaceholders(dbType DBType, condition string, startIdx int) string {
-	if dbType == MariaDB || dbType == Mysql {
-		return condition // MariaDB/MySQL uses "?" directly
+	if dbType == MariaDB || dbType == Mysql || dbType == SQLite {
+		return condition // MariaDB/MySQL/SQLite use "?" directly
 	}
 	var result strings.Builder
 	placeholderCount := startIdx
