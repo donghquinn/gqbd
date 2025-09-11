@@ -102,14 +102,62 @@ func (qb *QueryBuilder) buildPostgreSQLUpdate() (string, []interface{}, error) {
 	allArgs := updateArgs
 	if len(qb.conditions) > 0 {
 		whereConditions := make([]string, len(qb.conditions))
+		currentOffset := len(updateArgs)
 		for i, condition := range qb.conditions {
-			whereConditions[i] = shiftPlaceholders(condition, len(updateArgs))
+			whereConditions[i] = shiftPostgreSQLPlaceholders(condition, currentOffset)
+			// Count the placeholders in this condition to update offset
+			currentOffset += countPlaceholders(condition)
 		}
 		query += " WHERE " + strings.Join(whereConditions, " AND ")
 		allArgs = append(allArgs, qb.args...)
 	}
 
 	return query, allArgs, nil
+}
+
+func countPlaceholders(condition string) int {
+	count := 0
+	i := 0
+	for i < len(condition) {
+		if condition[i] == '$' && i+1 < len(condition) {
+			j := i + 1
+			for j < len(condition) && condition[j] >= '0' && condition[j] <= '9' {
+				j++
+			}
+			if j > i+1 {
+				count++
+				i = j
+				continue
+			}
+		}
+		i++
+	}
+	return count
+}
+
+func shiftPostgreSQLPlaceholders(condition string, offset int) string {
+	var result strings.Builder
+	i := 0
+	placeholderIndex := 1
+	for i < len(condition) {
+		if condition[i] == '$' && i+1 < len(condition) {
+			// Find the end of the placeholder number
+			j := i + 1
+			for j < len(condition) && condition[j] >= '0' && condition[j] <= '9' {
+				j++
+			}
+			if j > i+1 {
+				// Extract and shift the placeholder number
+				result.WriteString(fmt.Sprintf("$%d", offset+placeholderIndex))
+				placeholderIndex++
+				i = j
+				continue
+			}
+		}
+		result.WriteByte(condition[i])
+		i++
+	}
+	return result.String()
 }
 
 func escapePostgreSQLIdentifier(name string) (string, error) {
