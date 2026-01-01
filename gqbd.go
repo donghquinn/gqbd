@@ -535,6 +535,12 @@ func EscapeIdentifier(dbType DBType, name string) (string, error) {
 		return "", fmt.Errorf("empty identifier not allowed")
 	}
 
+	// Handle SQL functions (e.g., "COUNT(column)", "SUM(t.field)", etc.)
+	// If the identifier contains parentheses, it's likely a function call - don't escape it
+	if strings.Contains(name, "(") && strings.Contains(name, ")") {
+		return name, nil
+	}
+
 	// Handle table aliases (e.g., "table_name t" or "table_name AS t")
 	if strings.Contains(name, " ") {
 		parts := strings.Fields(name)
