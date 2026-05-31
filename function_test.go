@@ -7,9 +7,7 @@ import (
 	"github.com/donghquinn/gqbd"
 )
 
-/*
-TestBuildSelectWithCountFunction tests using COUNT() as a column
-*/
+// TestBuildSelectWithCountFunction tests using COUNT() as a column
 func TestBuildSelectWithCountFunction(t *testing.T) {
 	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "toon_table t", "COUNT(t.toon_seq)")
 
@@ -33,9 +31,7 @@ func TestBuildSelectWithCountFunction(t *testing.T) {
 	}
 }
 
-/*
-TestBuildSelectWithCountAndJoin tests COUNT() with JOIN and WHERE conditions
-*/
+// TestBuildSelectWithCountAndJoin tests COUNT() with JOIN and WHERE conditions
 func TestBuildSelectWithCountAndJoin(t *testing.T) {
 	userName := "test"
 	title := "sample"
@@ -76,9 +72,7 @@ func TestBuildSelectWithCountAndJoin(t *testing.T) {
 	}
 }
 
-/*
-TestBuildSelectWithMultipleFunctions tests multiple aggregate functions
-*/
+// TestBuildSelectWithMultipleFunctions tests multiple aggregate functions
 func TestBuildSelectWithMultipleFunctions(t *testing.T) {
 	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "orders o", "o.customer_id", "COUNT(o.id)", "SUM(o.total)", "AVG(o.amount)")
 
@@ -112,9 +106,7 @@ func TestBuildSelectWithMultipleFunctions(t *testing.T) {
 	}
 }
 
-/*
-TestBuildSelectWithCountStar tests COUNT(*) function
-*/
+// TestBuildSelectWithCountStar tests COUNT(*) function
 func TestBuildSelectWithCountStar(t *testing.T) {
 	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "COUNT(*)")
 
@@ -134,9 +126,7 @@ func TestBuildSelectWithCountStar(t *testing.T) {
 	}
 }
 
-/*
-TestBuildSelectWithCountFunctionMySQL tests COUNT() for MySQL/MariaDB
-*/
+// TestBuildSelectWithCountFunctionMySQL tests COUNT() for MySQL/MariaDB
 func TestBuildSelectWithCountFunctionMySQL(t *testing.T) {
 	qb := gqbd.BuildSelect(gqbd.MariaDB, "orders o", "COUNT(o.id)", "SUM(o.total)").
 		Where("o.status = ?", "completed")
@@ -161,9 +151,7 @@ func TestBuildSelectWithCountFunctionMySQL(t *testing.T) {
 	}
 }
 
-/*
-TestBuildSelectWithCountFunctionSQLite tests COUNT() for SQLite
-*/
+// TestBuildSelectWithCountFunctionSQLite tests COUNT() for SQLite
 func TestBuildSelectWithCountFunctionSQLite(t *testing.T) {
 	qb := gqbd.BuildSelect(gqbd.SQLite, "products p", "COUNT(p.id)").
 		Where("p.active = ?", true)
@@ -184,9 +172,7 @@ func TestBuildSelectWithCountFunctionSQLite(t *testing.T) {
 	}
 }
 
-/*
-TestUserExactCase tests the exact user scenario with dynamic conditions
-*/
+// TestUserExactCase tests the exact user scenario with dynamic conditions
 func TestUserExactCase(t *testing.T) {
 	// Test case 1: with userName and title
 	t.Run("WithUserNameAndTitle", func(t *testing.T) {

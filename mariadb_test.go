@@ -8,11 +8,6 @@ import (
 	"github.com/donghquinn/gqbd"
 )
 
-/*
-BuildSelect
-
-@ Return: Final SELECT query string, arguments slice, and error if any
-*/
 func TestBuildSelectMariaDB(t *testing.T) {
 	qb := gqbd.BuildSelect(gqbd.MariaDB, "table_name", "col1", "col2").
 		Where("col1 = ?", 100).
@@ -39,11 +34,6 @@ func TestBuildSelectMariaDB(t *testing.T) {
 	}
 }
 
-/*
-BuildInsert
-
-@ Return: INSERT query string, arguments slice, and error if any
-*/
 func TestBuildInsertMariaDB(t *testing.T) {
 	data := map[string]interface{}{
 		"col1": 200,
@@ -57,20 +47,18 @@ func TestBuildInsertMariaDB(t *testing.T) {
 	}
 	t.Logf("Query String :%s", query)
 
-	// INSERT INTO `table_name` (col 순서는 map 순회에 따라 달라질 수 있음)
-	if !strings.HasPrefix(query, "INSERT INTO `table_name`") {
-		t.Errorf("expected query to start with INSERT INTO `table_name`, got %s", query)
+	expectedQuery := "INSERT INTO `table_name` (`col1`, `col2`) VALUES (?, ?)"
+	normalizedQuery := strings.Join(strings.Fields(query), " ")
+	normalizedExpected := strings.Join(strings.Fields(expectedQuery), " ")
+	if normalizedQuery != normalizedExpected {
+		t.Errorf("expected query:\n%s\ngot:\n%s", normalizedExpected, normalizedQuery)
 	}
-	if len(args) != 2 {
-		t.Fatalf("expected 2 args, got %d", len(args))
+	expectedArgs := []interface{}{200, "test"}
+	if !reflect.DeepEqual(args, expectedArgs) {
+		t.Errorf("expected args %v, got %v", expectedArgs, args)
 	}
 }
 
-/*
-BuildUpdate
-
-@ Return: UPDATE query string, arguments slice, and error if any
-*/
 func TestBuildUpdateMariaDB(t *testing.T) {
 	data := map[string]interface{}{
 		"col1": 300,
@@ -98,11 +86,6 @@ func TestBuildUpdateMariaDB(t *testing.T) {
 	}
 }
 
-/*
-BuildDelete
-
-@ Return: DELETE query string, arguments slice, and error if any
-*/
 func TestBuildDeleteMariaDB(t *testing.T) {
 	qb := gqbd.BuildDelete(gqbd.MariaDB, "table_name").
 		Where("col1 = ?", 100)
