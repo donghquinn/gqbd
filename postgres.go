@@ -51,14 +51,19 @@ func (qb *QueryBuilder) buildPostgreSQLInsert() (string, []interface{}, error) {
 	var placeholders []string
 	var args []interface{}
 
-	for col, val := range qb.data {
-		safeCol, err := EscapeIdentifier(qb.dbType, col)
+	keys := make([]string, 0, len(qb.data))
+	for key := range qb.data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		safeCol, err := EscapeIdentifier(qb.dbType, key)
 		if err != nil {
 			return "", nil, err
 		}
 		cols = append(cols, safeCol)
 		placeholders = append(placeholders, "?")
-		args = append(args, val)
+		args = append(args, qb.data[key])
 	}
 
 	placeholdersStr := strings.Join(placeholders, ", ")
@@ -83,7 +88,7 @@ func (qb *QueryBuilder) buildPostgreSQLUpdate() (string, []interface{}, error) {
 	for key := range qb.data {
 		keys = append(keys, key)
 	}
-	
+
 	sort.Strings(keys)
 	for _, key := range keys {
 		safeCol, err := EscapeIdentifier(qb.dbType, key)

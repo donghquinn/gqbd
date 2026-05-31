@@ -48,12 +48,12 @@ type QueryBuilder struct {
 	returning  string
 }
 
-
 // BuildSelect creates a new SELECT query builder for the specified database type.
 // Zero allocations, SQL injection safe.
 //
 // Example:
-//   qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name")
+//
+//	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name")
 func BuildSelect(dbType DBType, table string, columns ...string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table, columns...)
 	qb.op = "SELECT"
@@ -64,7 +64,8 @@ func BuildSelect(dbType DBType, table string, columns ...string) *QueryBuilder {
 // Zero allocations, SQL injection safe.
 //
 // Example:
-//   qb := gqbd.BuildInsert(gqbd.PostgreSQL, "users")
+//
+//	qb := gqbd.BuildInsert(gqbd.PostgreSQL, "users")
 func BuildInsert(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
 	qb.op = "INSERT"
@@ -75,7 +76,8 @@ func BuildInsert(dbType DBType, table string) *QueryBuilder {
 // Zero allocations, SQL injection safe.
 //
 // Example:
-//   qb := gqbd.BuildUpdate(gqbd.PostgreSQL, "users")
+//
+//	qb := gqbd.BuildUpdate(gqbd.PostgreSQL, "users")
 func BuildUpdate(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
 	qb.op = "UPDATE"
@@ -86,7 +88,8 @@ func BuildUpdate(dbType DBType, table string) *QueryBuilder {
 // Zero allocations, SQL injection safe.
 //
 // Example:
-//   qb := gqbd.BuildDelete(gqbd.PostgreSQL, "users")
+//
+//	qb := gqbd.BuildDelete(gqbd.PostgreSQL, "users")
 func BuildDelete(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
 	qb.op = "DELETE"
@@ -498,28 +501,6 @@ func (qb *QueryBuilder) buildDelete() (string, []interface{}, error) {
 }
 
 /*
-shiftPlaceholders
-
-@ condition: Condition string with placeholders
-@ offset: Value to add to placeholder indices
-@ Return: Condition string with shifted placeholders
-*/
-func shiftPlaceholders(condition string, offset int) string {
-	// For PostgreSQL, convert ? placeholders to proper $N format
-	result := ""
-	placeholderIndex := offset
-	for _, char := range condition {
-		if char == '?' {
-			result += fmt.Sprintf("$%d", placeholderIndex+1)
-			placeholderIndex++
-		} else {
-			result += string(char)
-		}
-	}
-	return result
-}
-
-/*
 EscapeIdentifier
 
 @ dbType: Database type (PostgreSQL, MariaDB, Mysql)
@@ -656,11 +637,12 @@ func GeneratePlaceholders(dbType DBType, startIdx, count int) string {
 // based on the database type and configuration.
 //
 // Examples:
-//   config := gqbd.DBConfig{
-//       Host: "localhost", Port: 5432, User: "postgres", 
-//       Password: "password", DBName: "mydb", SSLMode: "disable"
-//   }
-//   dsn := gqbd.BuildConnectionString(gqbd.PostgreSQL, config)
+//
+//	config := gqbd.DBConfig{
+//	    Host: "localhost", Port: 5432, User: "postgres",
+//	    Password: "password", DBName: "mydb", SSLMode: "disable"
+//	}
+//	dsn := gqbd.BuildConnectionString(gqbd.PostgreSQL, config)
 func BuildConnectionString(dbType DBType, config DBConfig) string {
 	switch dbType {
 	case PostgreSQL:
@@ -676,7 +658,7 @@ func BuildConnectionString(dbType DBType, config DBConfig) string {
 
 func buildPostgreSQLConnectionString(config DBConfig) string {
 	var parts []string
-	
+
 	if config.Host != "" {
 		parts = append(parts, "host="+config.Host)
 	}
@@ -697,13 +679,13 @@ func buildPostgreSQLConnectionString(config DBConfig) string {
 	} else {
 		parts = append(parts, "sslmode=disable")
 	}
-	
+
 	return strings.Join(parts, " ")
 }
 
 func buildMySQLConnectionString(config DBConfig) string {
 	var dsn strings.Builder
-	
+
 	if config.User != "" {
 		dsn.WriteString(config.User)
 	}
@@ -711,7 +693,7 @@ func buildMySQLConnectionString(config DBConfig) string {
 		dsn.WriteString(":" + config.Password)
 	}
 	dsn.WriteString("@")
-	
+
 	if config.Host != "" {
 		dsn.WriteString("tcp(" + config.Host)
 		if config.Port > 0 {
@@ -719,22 +701,22 @@ func buildMySQLConnectionString(config DBConfig) string {
 		}
 		dsn.WriteString(")")
 	}
-	
+
 	if config.DBName != "" {
 		dsn.WriteString("/" + config.DBName)
 	}
-	
+
 	var params []string
 	if config.Charset != "" {
 		params = append(params, "charset="+config.Charset)
 	}
 	params = append(params, "parseTime=True")
 	params = append(params, "loc=Local")
-	
+
 	if len(params) > 0 {
 		dsn.WriteString("?" + strings.Join(params, "&"))
 	}
-	
+
 	return dsn.String()
 }
 
