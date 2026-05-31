@@ -42,26 +42,11 @@ func (qb *QueryBuilder) buildMySQLSelect() (string, []interface{}, error) {
 }
 
 func (qb *QueryBuilder) buildMySQLInsert() (string, []interface{}, error) {
-	if qb.data == nil {
-		return "", nil, fmt.Errorf("no data provided for INSERT")
+	cols, placeholders, args, err := qb.prepareInsertParts()
+	if err != nil {
+		return "", nil, err
 	}
-	var cols []string
-	var placeholders []string
-	var args []interface{}
-
-	for col, val := range qb.data {
-		safeCol, err := EscapeIdentifier(qb.dbType, col)
-		if err != nil {
-			return "", nil, err
-		}
-		cols = append(cols, safeCol)
-		placeholders = append(placeholders, "?")
-		args = append(args, val)
-	}
-
-	placeholdersStr := strings.Join(placeholders, ", ")
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(cols, ", "), placeholdersStr)
-
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 	return query, args, nil
 }
 
@@ -76,7 +61,7 @@ func (qb *QueryBuilder) buildMySQLUpdate() (string, []interface{}, error) {
 	for key := range qb.data {
 		keys = append(keys, key)
 	}
-	
+
 	sort.Strings(keys)
 	for _, key := range keys {
 		safeCol, err := EscapeIdentifier(qb.dbType, key)
