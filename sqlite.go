@@ -42,36 +42,14 @@ func (qb *QueryBuilder) buildSQLiteSelect() (string, []interface{}, error) {
 }
 
 func (qb *QueryBuilder) buildSQLiteInsert() (string, []interface{}, error) {
-	if qb.data == nil {
-		return "", nil, fmt.Errorf("no data provided for INSERT")
+	cols, placeholders, args, err := qb.prepareInsertParts()
+	if err != nil {
+		return "", nil, err
 	}
-	var cols []string
-	var placeholders []string
-	var args []interface{}
-
-	keys := make([]string, 0, len(qb.data))
-	for key := range qb.data {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		safeCol, err := EscapeIdentifier(qb.dbType, key)
-		if err != nil {
-			return "", nil, err
-		}
-		cols = append(cols, safeCol)
-		placeholders = append(placeholders, "?")
-		args = append(args, qb.data[key])
-	}
-
-	placeholdersStr := strings.Join(placeholders, ", ")
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(cols, ", "), placeholdersStr)
-
-	// SQLite supports RETURNING clause (since version 3.35.0)
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 	if qb.returning != "" {
 		query += " RETURNING " + qb.returning
 	}
-
 	return query, args, nil
 }
 

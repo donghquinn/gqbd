@@ -2,6 +2,7 @@ package gqbd
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -428,6 +429,32 @@ func (qb *QueryBuilder) Returning(clause string) *QueryBuilder {
 	}
 	qb.returning = clause
 	return qb
+}
+
+// prepareInsertParts extracts sorted column names, their ? placeholders, and argument
+// values from qb.data. Called by all three DB-specific INSERT builders.
+func (qb *QueryBuilder) prepareInsertParts() (cols []string, placeholders []string, args []interface{}, err error) {
+	if qb.data == nil {
+		return nil, nil, nil, fmt.Errorf("no data provided for INSERT")
+	}
+	keys := make([]string, 0, len(qb.data))
+	for key := range qb.data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	cols = make([]string, 0, len(keys))
+	placeholders = make([]string, 0, len(keys))
+	args = make([]interface{}, 0, len(keys))
+	for _, key := range keys {
+		safeCol, escErr := EscapeIdentifier(qb.dbType, key)
+		if escErr != nil {
+			return nil, nil, nil, escErr
+		}
+		cols = append(cols, safeCol)
+		placeholders = append(placeholders, "?")
+		args = append(args, qb.data[key])
+	}
+	return cols, placeholders, args, nil
 }
 
 // Build generates the final SQL query string and parameter arguments.
