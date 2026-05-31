@@ -1,4 +1,6 @@
 # GQBD - High-Performance Go Query Builder
+[![Test](https://github.com/donghquinn/gqbd/actions/workflows/test.yml/badge.svg)](https://github.com/donghquinn/gopandas/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/donghquinn/gqbd/branch/main/graph/badge.svg)](https://codecov.io/gh/donghquinn/gopandas)
 
 ## Introduction
 **GQBD** is a high-performance, zero-allocation SQL query builder for Go, inspired by gdct design principles.
