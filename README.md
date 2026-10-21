@@ -2,7 +2,7 @@
 [![Test](https://github.com/donghquinn/gqbd/actions/workflows/test.yml/badge.svg)](https://github.com/donghquinn/gqbd/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/donghquinn/gqbd/branch/main/graph/badge.svg)](https://codecov.io/gh/donghquinn/gqbd)
 
-**GQBD** is a high-performance, low-allocation query builder for Go: SQL for PostgreSQL, MySQL, MariaDB, SQLite and ClickHouse, plus command builders for Redis and MongoDB. It only builds queries; run them with the driver you already use.
+**GQBD** is a high-performance, low-allocation query builder for Go: SQL for PostgreSQL, MySQL, MariaDB, SQLite, ClickHouse and Oracle, plus command builders for Redis and MongoDB. It only builds queries; run them with the driver you already use.
 
 - 🚀 **Low allocations**: single-pass rendering into a pre-sized buffer
 - 🔒 **Injection safe**: parameter binding, identifier escaping, and `$`-operator protection for MongoDB
@@ -39,6 +39,7 @@ rows, err := db.Query(query, args...)
 | MariaDB | `gqbd.MariaDB` | SQL | `?` | `` `identifier` `` | ❌ | [docs/mysql.md](docs/mysql.md) |
 | SQLite | `gqbd.SQLite` | SQL | `?` | `"identifier"` | ✅ (3.35.0+) | [docs/sqlite.md](docs/sqlite.md) |
 | ClickHouse | `gqbd.ClickHouse` | SQL (+ `FINAL`, `PREWHERE`, `SETTINGS`) | `?` | `` `identifier` `` | ❌ | [docs/clickhouse.md](docs/clickhouse.md) |
+| Oracle | `gqbd.Oracle` | SQL (`OFFSET ... FETCH NEXT`) | `:1, :2, ...` | `"identifier"` (case-sensitive) | ❌ | [docs/oracle.md](docs/oracle.md) |
 | Redis | `gqbd.Redis` | `Redis*` commands | — | — | — | [docs/redis.md](docs/redis.md) |
 | MongoDB | `gqbd.MongoDB` | `Mongo*` filters, updates, pipelines | — | — | — | [docs/mongodb.md](docs/mongodb.md) |
 
@@ -60,7 +61,7 @@ Run with `go test -bench . -benchmem` (Apple M-series, Go 1.27). See `benchmark_
 
 - `gqbd.go` - Public API: builder constructors and chainable clause methods
 - `build.go` - Renders SELECT/INSERT/UPDATE/DELETE in a single pass
-- `dialect.go` - Per-database differences (identifier quoting, placeholders, RETURNING, ClickHouse mutations) and the SQL writer
+- `dialect.go` - Per-database differences (identifier quoting, placeholders, RETURNING, ClickHouse mutations, Oracle pagination) and the SQL writer
 - `connection.go` - Connection string generation
 - `redis.go` - Redis command builders
 - `mongodb.go` - MongoDB find/update/delete and aggregation builders

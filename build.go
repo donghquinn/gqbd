@@ -46,16 +46,7 @@ func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 	args = append(args, qb.prewhereArgs...)
 	args = append(args, qb.whereArgs...)
 	args = append(args, qb.havingArgs...)
-	if qb.limit > 0 {
-		w.WriteString(" LIMIT ")
-		w.placeholder()
-		args = append(args, qb.limit)
-	}
-	if qb.offset > 0 {
-		w.WriteString(" OFFSET ")
-		w.placeholder()
-		args = append(args, qb.offset)
-	}
+	args = qb.writeLimit(w, args)
 	qb.writeSettings(w)
 	return w.String(), args, nil
 }
@@ -142,6 +133,37 @@ func (qb *QueryBuilder) buildDelete() (string, []interface{}, error) {
 	qb.writeWhere(w)
 	qb.writeSettings(w)
 	return w.String(), append([]interface{}(nil), qb.whereArgs...), nil
+}
+
+// writeLimit writes LIMIT/OFFSET, or OFFSET ... ROWS FETCH NEXT ... ROWS ONLY
+// where LIMIT is not supported, appending the bound values in query order.
+func (qb *QueryBuilder) writeLimit(w *sqlWriter, args []interface{}) []interface{} {
+	if qb.d.fetchFirst {
+		if qb.offset > 0 {
+			w.WriteString(" OFFSET ")
+			w.placeholder()
+			w.WriteString(" ROWS")
+			args = append(args, qb.offset)
+		}
+		if qb.limit > 0 {
+			w.WriteString(" FETCH NEXT ")
+			w.placeholder()
+			w.WriteString(" ROWS ONLY")
+			args = append(args, qb.limit)
+		}
+		return args
+	}
+	if qb.limit > 0 {
+		w.WriteString(" LIMIT ")
+		w.placeholder()
+		args = append(args, qb.limit)
+	}
+	if qb.offset > 0 {
+		w.WriteString(" OFFSET ")
+		w.placeholder()
+		args = append(args, qb.offset)
+	}
+	return args
 }
 
 func (qb *QueryBuilder) checkRequiredWhere(op string) error {

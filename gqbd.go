@@ -15,6 +15,7 @@ const (
 	Mysql      DBType = "mysql"
 	SQLite     DBType = "sqlite"
 	ClickHouse DBType = "clickhouse"
+	Oracle     DBType = "oracle"
 	// Redis is not a SQL database: use the Redis* command builders (see redis.go)
 	// and BuildConnectionString. The SQL builders return an error for Redis.
 	Redis DBType = "redis"
@@ -30,7 +31,7 @@ type DBConfig struct {
 	User     string
 	Password string
 	DBName   string // For Redis: logical database number, e.g. "0". For MongoDB: default auth database
-	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB/ClickHouse: any value other than "disable" enables TLS
+	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB/ClickHouse/Oracle: any value other than "disable" enables TLS
 	Charset  string // For MySQL/MariaDB: utf8, utf8mb4, etc.
 	FilePath string // For SQLite: path to database file
 }
@@ -123,7 +124,7 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 		qb.err = fmt.Errorf("MongoDB is not a SQL database; use MongoFind, MongoUpdate, MongoDelete or MongoAggregate")
 		return qb
 	}
-	safeTable, err := qb.d.escape(table)
+	safeTable, err := qb.d.escapeTable(table)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -205,7 +206,7 @@ func (qb *QueryBuilder) join(kind, joinTable, onCondition string) *QueryBuilder 
 	if qb.err != nil {
 		return qb
 	}
-	safeTable, err := qb.d.escape(joinTable)
+	safeTable, err := qb.d.escapeTable(joinTable)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -215,7 +216,8 @@ func (qb *QueryBuilder) join(kind, joinTable, onCondition string) *QueryBuilder 
 }
 
 // Where adds a WHERE condition with parameter binding.
-// Use ? as the placeholder; it is rendered as $N for PostgreSQL at Build time.
+// Use ? as the placeholder; it is rendered as $N for PostgreSQL and :N for
+// Oracle at Build time.
 // SQL injection safe through proper parameter binding.
 func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuilder {
 	if qb.err != nil {
@@ -558,7 +560,7 @@ func (qb *QueryBuilder) Build() (string, []interface{}, error) {
 /*
 EscapeIdentifier
 
-@ dbType: Database type (PostgreSQL, MariaDB, Mysql, SQLite, ClickHouse)
+@ dbType: Database type (PostgreSQL, MariaDB, Mysql, SQLite, ClickHouse, Oracle)
 @ name: Identifier to escape
 @ Return: Escaped identifier and error if any
 */
@@ -589,7 +591,7 @@ ReplacePlaceholders
 */
 func ReplacePlaceholders(dbType DBType, condition string, startIdx int) string {
 	d := dialectFor(dbType)
-	if !d.numbered {
+	if d.numPrefix == 0 {
 		return condition
 	}
 	w := newSQLWriter(d, len(condition)+8)

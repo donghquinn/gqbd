@@ -9,19 +9,22 @@ import (
 // dialect captures everything that differs between the supported SQL databases.
 type dialect struct {
 	quote           byte // identifier quote character; 0 leaves identifiers unescaped
-	numbered        bool // $1, $2, ... placeholders instead of ?
+	numPrefix       byte // prefix of numbered placeholders ($1 or :1); 0 writes ?
 	returning       bool // supports INSERT ... RETURNING
 	backslashEscape bool // backslash is an escape character inside quoted identifiers
 	alterUpdate     bool // UPDATE is written as ALTER TABLE ... UPDATE (a mutation)
 	requireWhere    bool // UPDATE and DELETE must have a WHERE clause
 	chClauses       bool // supports ClickHouse's FINAL, PREWHERE and SETTINGS
+	noTableAS       bool // table aliases cannot be introduced with AS
+	fetchFirst      bool // OFFSET n ROWS FETCH NEXT m ROWS ONLY instead of LIMIT/OFFSET
 }
 
 var (
-	postgresDialect   = &dialect{quote: '"', numbered: true, returning: true}
+	postgresDialect   = &dialect{quote: '"', numPrefix: '$', returning: true}
 	mysqlDialect      = &dialect{quote: '`'}
 	sqliteDialect     = &dialect{quote: '"', returning: true}
 	clickhouseDialect = &dialect{quote: '`', backslashEscape: true, alterUpdate: true, requireWhere: true, chClauses: true}
+	oracleDialect     = &dialect{quote: '"', numPrefix: ':', noTableAS: true, fetchFirst: true}
 	unknownDialect    = &dialect{}
 )
 
@@ -35,6 +38,8 @@ func dialectFor(dbType DBType) *dialect {
 		return sqliteDialect
 	case ClickHouse:
 		return clickhouseDialect
+	case Oracle:
+		return oracleDialect
 	default:
 		return unknownDialect
 	}
@@ -83,6 +88,17 @@ func (d *dialect) escape(name string) (string, error) {
 	}
 
 	return d.escapeQualified(name)
+}
+
+// escapeTable is escape for table names, dropping AS before the alias in
+// dialects that do not accept it there.
+func (d *dialect) escapeTable(name string) (string, error) {
+	if d.noTableAS && strings.IndexByte(name, ' ') >= 0 {
+		if parts := strings.Fields(name); len(parts) == 3 && strings.EqualFold(parts[1], "AS") {
+			return d.escapeAliased(parts[0], " ", parts[2])
+		}
+	}
+	return d.escape(name)
 }
 
 func (d *dialect) escapeAliased(name, sep, alias string) (string, error) {
@@ -145,11 +161,11 @@ func newSQLWriter(d *dialect, size int) *sqlWriter {
 
 func (w *sqlWriter) placeholder() {
 	w.n++
-	if !w.d.numbered {
+	if w.d.numPrefix == 0 {
 		w.WriteByte('?')
 		return
 	}
-	w.WriteByte('$')
+	w.WriteByte(w.d.numPrefix)
 	w.Write(strconv.AppendInt(w.scratch[:0], int64(w.n), 10))
 }
 
