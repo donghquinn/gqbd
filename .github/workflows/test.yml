@@ -4,10 +4,18 @@ on:
   push:
     branches:
       - main
+      - dev
+  pull_request:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum version in go.mod, and the latest release.
+        go-version: ["1.18", "stable"]
 
     steps:
       - uses: actions/checkout@v4
@@ -15,12 +23,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go-version }}
+
+      - name: Check formatting
+        if: matrix.go-version == 'stable'
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Run tests
-        run: go test ./... -coverprofile=coverage.out -covermode=atomic
+        run: go test -race ./... -coverprofile=coverage.out -covermode=atomic
 
       - name: Upload coverage to Codecov
+        if: matrix.go-version == 'stable'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.out

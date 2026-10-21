@@ -51,6 +51,10 @@ type DBConfig struct {
 //
 // Conditions are stored with ? placeholders and numbered when Build is called,
 // so Build can be called repeatedly and arguments always follow query order.
+//
+// Chained methods modify the builder they are called on. To reuse a base query,
+// call Clone and add to the copy. A builder is not safe for concurrent use,
+// but Build may be called from several goroutines once building is finished.
 type QueryBuilder struct {
 	op         string
 	dbType     DBType
@@ -127,6 +131,7 @@ func BuildDelete(dbType DBType, table string) *QueryBuilder {
 func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuilder {
 	qb := &QueryBuilder{dbType: dbType, d: dialectFor(dbType)}
 	switch dbType {
+	case PostgreSQL, MariaDB, Mysql, SQLite, ClickHouse, Oracle:
 	case Redis:
 		qb.err = fmt.Errorf("Redis is not a SQL database; use the Redis command builders (RedisGet, RedisSet, RedisHSet, ...)")
 		return qb
@@ -141,6 +146,9 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 		return qb
 	case Qdrant:
 		qb.err = fmt.Errorf("Qdrant is not a SQL database; use QdrantQuery, QdrantCount or QdrantDelete")
+		return qb
+	default:
+		qb.err = unknownDBTypeError(dbType)
 		return qb
 	}
 	safeTable, err := qb.d.escapeTable(table)
@@ -236,7 +244,8 @@ func (qb *QueryBuilder) join(kind, joinTable, onCondition string) *QueryBuilder 
 
 // Where adds a WHERE condition with parameter binding.
 // Use ? as the placeholder; it is rendered as $N for PostgreSQL and :N for
-// Oracle at Build time.
+// Oracle at Build time. Write ?? for a literal ? operator, such as
+// PostgreSQL's jsonb "data ?? 'key'".
 // SQL injection safe through proper parameter binding.
 func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuilder {
 	if qb.err != nil {
@@ -584,7 +593,38 @@ EscapeIdentifier
 @ Return: Escaped identifier and error if any
 */
 func EscapeIdentifier(dbType DBType, name string) (string, error) {
-	return dialectFor(dbType).escape(name)
+	d := dialectFor(dbType)
+	if d == unknownDialect {
+		return "", unknownDBTypeError(dbType)
+	}
+	return d.escape(name)
+}
+
+func unknownDBTypeError(dbType DBType) error {
+	return fmt.Errorf("unsupported database type %q; use one of the gqbd DBType constants", string(dbType))
+}
+
+// Clone returns an independent copy of the builder, so a shared base query can
+// be extended without changing it:
+//
+//	base := gqbd.BuildSelect(gqbd.PostgreSQL, "orders").Where("tenant_id = ?", tenant)
+//	open := base.Clone().Where("status = ?", "open")
+//
+// The Values/Set map is shared with the original, not copied; Values and Set
+// replace it rather than modify it.
+func (qb *QueryBuilder) Clone() *QueryBuilder {
+	c := *qb
+	c.columns = append([]string(nil), qb.columns...)
+	c.joins = append([]string(nil), qb.joins...)
+	c.where = append([]string(nil), qb.where...)
+	c.whereArgs = append([]interface{}(nil), qb.whereArgs...)
+	c.groupBy = append([]string(nil), qb.groupBy...)
+	c.having = append([]string(nil), qb.having...)
+	c.havingArgs = append([]interface{}(nil), qb.havingArgs...)
+	c.prewhere = append([]string(nil), qb.prewhere...)
+	c.prewhereArgs = append([]interface{}(nil), qb.prewhereArgs...)
+	c.settings = append([]string(nil), qb.settings...)
+	return &c
 }
 
 /*
