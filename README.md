@@ -3,12 +3,12 @@
 [![codecov](https://codecov.io/gh/donghquinn/gqbd/branch/main/graph/badge.svg)](https://codecov.io/gh/donghquinn/gqbd)
 
 ## Introduction
-**GQBD** is a high-performance, low-allocation SQL query builder (plus a Redis command builder) for Go, inspired by gdct design principles.
+**GQBD** is a high-performance, low-allocation SQL query builder (plus Redis and MongoDB builders) for Go, inspired by gdct design principles.
 
 ✨ **Key Features:**
 - 🚀 **Low allocations**: single-pass rendering into a pre-sized buffer
 - 🔒 **SQL injection safe** with automatic parameter binding and identifier escaping  
-- 🎯 **Multi-database support**: PostgreSQL, MySQL, MariaDB, SQLite, and Redis
+- 🎯 **Multi-database support**: PostgreSQL, MySQL, MariaDB, SQLite, Redis, and MongoDB
 - ⚡ **Performance optimized** - designed for high-throughput applications
 - 📦 **Zero dependencies** - pure Go implementation
 - 🔧 **Fluent API** - chainable method design for readable code
@@ -37,6 +37,7 @@ go get github.com/donghquinn/gqbd
 - ✅ **Cross-Database**: PostgreSQL ($N), MySQL/MariaDB/SQLite (?) placeholder formats
 - ✅ **Connection Strings**: Built-in database connection string generation (including `redis://` URLs)
 - ✅ **Redis**: Command builders for strings, hashes, lists, sets, sorted sets, TTLs and SCAN
+- ✅ **MongoDB**: Find/update/delete builders and aggregation pipelines, without importing the driver
 
 ## Quick Start
 
@@ -279,6 +280,71 @@ Available builders:
 
 `RedisKey("user", 42, "profile")` joins key parts with `:` → `user:42:profile`.
 
+### MongoDB Examples
+
+MongoDB gets its own builders (the SQL builders return an error for `gqbd.MongoDB`). gqbd does **not** import the MongoDB driver: filters, updates and pipeline stages are plain `map[string]interface{}` values, which the driver encodes itself. Sorts need key order, so they use `gqbd.D`, which mirrors `bson.D` and implements the driver's `bson.Marshaler` interface. It works with mongo-go-driver v1 and v2.
+
+#### Find
+
+```go
+q, err := gqbd.MongoFind("users").
+    Eq("status", "active").
+    Gte("age", 18).Lt("age", 65).          // same field: {"age": {"$gte": 18, "$lt": 65}}
+    In("role", []string{"admin", "editor"}).
+    Or(gqbd.MongoFilter().Eq("country", "KR"), gqbd.MongoFilter().Exists("vip", true)).
+    Sort("created_at", -1).Sort("name", 1). // keeps this order
+    Project("name", "email").
+    Limit(10).Skip(20).
+    Build()
+
+// Every field can be passed as-is: an empty Filter matches all documents,
+// an empty Sort/Projection is a no-op, and Limit/Skip 0 mean none.
+cur, err := db.Collection(q.Collection).Find(ctx, q.Filter,
+    options.Find().SetSort(q.Sort).SetProjection(q.Projection).SetLimit(q.Limit).SetSkip(q.Skip))
+```
+
+Also available: `Ne`, `Gt`, `Lte`, `Nin`, `Regex(field, pattern, options)`, and `Raw(key, value)` for anything else (e.g. `$text`, `$expr`).
+
+#### Update and Delete
+
+```go
+q, err := gqbd.MongoUpdate("users").
+    Eq("_id", id).
+    Set(map[string]interface{}{"name": "Kim"}).
+    Inc("logins", 1).
+    Push("tags", "new").
+    Upsert().
+    Build()
+// q.Update: {"$set": {"name": "Kim"}, "$inc": {"logins": 1}, "$push": {"tags": "new"}}
+db.Collection(q.Collection).UpdateOne(ctx, q.Filter, q.Update, options.Update().SetUpsert(q.Upsert))
+
+q, err = gqbd.MongoDelete("sessions").Lt("expires_at", time.Now()).Build()
+db.Collection(q.Collection).DeleteMany(ctx, q.Filter)
+```
+
+Also available: `Unset`, `AddToSet`, `Pull`.
+
+#### Aggregation
+
+`Build()` returns `(collection, pipeline, err)`, the same shape as the SQL builders:
+
+```go
+coll, pipeline, err := gqbd.MongoAggregate("orders").
+    Match(gqbd.MongoFilter().Eq("status", "paid")).
+    Group("$customer_id", map[string]interface{}{"total": map[string]interface{}{"$sum": "$amount"}}).
+    Sort("total", -1).
+    Limit(10).
+    Build()
+cur, err := db.Collection(coll).Aggregate(ctx, pipeline)
+```
+
+Stages: `Match`, `Group`, `Sort`, `Project`, `Limit`, `Skip`, `Unwind`, `Lookup`, `Count`, and `Stage(name, spec)` for any other stage.
+
+#### Safety
+
+- Field names starting with `$` are rejected, so a field name taken from user input can't inject an operator.
+- `Eq` with a document-like value (e.g. a map decoded from a JSON body such as `{"$ne": null}`) is emitted as `{"$eq": value}`, so it is compared literally instead of being read as operators.
+
 ## Database Connection Strings
 
 GQBD includes built-in support for generating database connection strings for use with `sql.Open()`.
@@ -334,6 +400,18 @@ redisConfig := gqbd.DBConfig{
 }
 redisURL := gqbd.BuildConnectionString(gqbd.Redis, redisConfig)
 // Result: "redis://:secret@localhost:6379/0"
+
+// MongoDB URI (for options.Client().ApplyURI)
+mongoConfig := gqbd.DBConfig{
+    Host:     "localhost",
+    Port:     27017,
+    User:     "app",
+    Password: "secret",
+    DBName:   "shop",    // default auth database
+    SSLMode:  "require", // anything other than "disable" adds tls=true
+}
+mongoURI := gqbd.BuildConnectionString(gqbd.MongoDB, mongoConfig)
+// Result: "mongodb://app:secret@localhost:27017/shop?tls=true"
 ```
 
 ### Complete Database Setup Example
@@ -515,6 +593,7 @@ func querySQLite() {
 | MariaDB | `gqbd.MariaDB` | `?, ?, ?...` | `` `identifier` `` | ❌ No |
 | SQLite | `gqbd.SQLite` | `?, ?, ?...` | `"identifier"` | ✅ Yes (3.35.0+) |
 | Redis | `gqbd.Redis` | — (command builders) | — | — |
+| MongoDB | `gqbd.MongoDB` | — (filter/update/pipeline builders) | — | — |
 
 ## Benchmarks
 
@@ -559,6 +638,8 @@ Run with `go test -bench . -benchmem` (Apple M-series, Go 1.27). See `benchmark_
 - `dialect.go` - Per-database differences (identifier quoting, placeholders, RETURNING) and the SQL writer
 - `connection.go` - Connection string generation
 - `redis.go` - Redis command builders
+- `mongodb.go` - MongoDB find/update/delete and aggregation builders
+- `bson.go` - `gqbd.D`, an ordered document with a minimal BSON encoder (so the driver isn't a dependency)
 
 Database differences live in one dialect table, so adding a SQL database means adding one `dialect` entry.
 

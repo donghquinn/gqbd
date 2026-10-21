@@ -16,6 +16,9 @@ const (
 	// Redis is not a SQL database: use the Redis* command builders (see redis.go)
 	// and BuildConnectionString. The SQL builders return an error for Redis.
 	Redis DBType = "redis"
+	// MongoDB is not a SQL database: use MongoFind, MongoUpdate, MongoDelete and
+	// MongoAggregate (see mongodb.go). The SQL builders return an error for MongoDB.
+	MongoDB DBType = "mongodb"
 )
 
 // DBConfig holds database connection configuration
@@ -24,8 +27,8 @@ type DBConfig struct {
 	Port     int
 	User     string
 	Password string
-	DBName   string // For Redis: logical database number, e.g. "0"
-	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis: any value other than "disable" selects rediss://
+	DBName   string // For Redis: logical database number, e.g. "0". For MongoDB: default auth database
+	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB: any value other than "disable" enables TLS
 	Charset  string // For MySQL/MariaDB: utf8, utf8mb4, etc.
 	FilePath string // For SQLite: path to database file
 }
@@ -104,8 +107,12 @@ func BuildDelete(dbType DBType, table string) *QueryBuilder {
 // Internal function used by Build* methods.
 func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuilder {
 	qb := &QueryBuilder{dbType: dbType, d: dialectFor(dbType)}
-	if dbType == Redis {
+	switch dbType {
+	case Redis:
 		qb.err = fmt.Errorf("Redis is not a SQL database; use the Redis command builders (RedisGet, RedisSet, RedisHSet, ...)")
+		return qb
+	case MongoDB:
+		qb.err = fmt.Errorf("MongoDB is not a SQL database; use MongoFind, MongoUpdate, MongoDelete or MongoAggregate")
 		return qb
 	}
 	safeTable, err := qb.d.escape(table)

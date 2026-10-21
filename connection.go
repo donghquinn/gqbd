@@ -6,8 +6,9 @@ import (
 )
 
 // BuildConnectionString creates a database connection string based on the
-// database type and configuration: a DSN for sql.Open(), or a redis:// URL
-// for Redis clients (e.g. redis.ParseURL in go-redis).
+// database type and configuration: a DSN for sql.Open(), a redis:// URL for
+// Redis clients (e.g. redis.ParseURL in go-redis), or a mongodb:// URI for
+// options.Client().ApplyURI.
 //
 // Examples:
 //
@@ -24,6 +25,8 @@ func BuildConnectionString(dbType DBType, config DBConfig) string {
 		return buildSQLiteConnectionString(config)
 	case Redis:
 		return buildRedisConnectionString(config)
+	case MongoDB:
+		return buildMongoDBConnectionString(config)
 	default:
 		return buildMySQLConnectionString(config)
 	}
@@ -106,6 +109,19 @@ func buildSQLiteConnectionString(config DBConfig) string {
 	return ":memory:"
 }
 
+// buildMongoDBConnectionString returns mongodb://[user:password@]host[:port]/[db][?tls=true].
+func buildMongoDBConnectionString(config DBConfig) string {
+	var b strings.Builder
+	b.WriteString("mongodb://")
+	writeURLAuthority(&b, config, "localhost")
+	b.WriteByte('/')
+	b.WriteString(percentEncode(config.DBName))
+	if config.SSLMode != "" && config.SSLMode != "disable" {
+		b.WriteString("?tls=true")
+	}
+	return b.String()
+}
+
 // buildRedisConnectionString returns redis://[user:password@]host[:port][/db],
 // or rediss:// when SSLMode is set to anything other than "disable".
 // It is written by hand rather than with net/url so the package imports no
@@ -117,6 +133,17 @@ func buildRedisConnectionString(config DBConfig) string {
 	} else {
 		b.WriteString("redis://")
 	}
+	writeURLAuthority(&b, config, "localhost")
+	if config.DBName != "" {
+		b.WriteByte('/')
+		b.WriteString(percentEncode(config.DBName))
+	}
+	return b.String()
+}
+
+// writeURLAuthority writes [user[:password]@]host[:port], percent-encoding the
+// credentials and bracketing IPv6 hosts.
+func writeURLAuthority(b *strings.Builder, config DBConfig, defaultHost string) {
 	if config.User != "" || config.Password != "" {
 		b.WriteString(percentEncode(config.User))
 		if config.Password != "" {
@@ -127,7 +154,7 @@ func buildRedisConnectionString(config DBConfig) string {
 	}
 	host := config.Host
 	if host == "" {
-		host = "localhost"
+		host = defaultHost
 	}
 	if strings.IndexByte(host, ':') >= 0 && host[0] != '[' {
 		host = "[" + host + "]" // IPv6 literal
@@ -137,11 +164,6 @@ func buildRedisConnectionString(config DBConfig) string {
 		b.WriteByte(':')
 		b.WriteString(strconv.Itoa(config.Port))
 	}
-	if config.DBName != "" {
-		b.WriteByte('/')
-		b.WriteString(percentEncode(config.DBName))
-	}
-	return b.String()
 }
 
 // percentEncode escapes every byte except RFC 3986 unreserved characters.
