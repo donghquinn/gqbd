@@ -1,8 +1,6 @@
 package gqbd
 
 import (
-	"net"
-	"net/url"
 	"strconv"
 	"strings"
 )
@@ -110,24 +108,55 @@ func buildSQLiteConnectionString(config DBConfig) string {
 
 // buildRedisConnectionString returns redis://[user:password@]host[:port][/db],
 // or rediss:// when SSLMode is set to anything other than "disable".
+// It is written by hand rather than with net/url so the package imports no
+// networking code.
 func buildRedisConnectionString(config DBConfig) string {
-	u := url.URL{Scheme: "redis", Host: config.Host}
+	var b strings.Builder
 	if config.SSLMode != "" && config.SSLMode != "disable" {
-		u.Scheme = "rediss"
+		b.WriteString("rediss://")
+	} else {
+		b.WriteString("redis://")
 	}
-	if u.Host == "" {
-		u.Host = "localhost"
+	if config.User != "" || config.Password != "" {
+		b.WriteString(percentEncode(config.User))
+		if config.Password != "" {
+			b.WriteByte(':')
+			b.WriteString(percentEncode(config.Password))
+		}
+		b.WriteByte('@')
 	}
+	host := config.Host
+	if host == "" {
+		host = "localhost"
+	}
+	if strings.IndexByte(host, ':') >= 0 && host[0] != '[' {
+		host = "[" + host + "]" // IPv6 literal
+	}
+	b.WriteString(host)
 	if config.Port > 0 {
-		u.Host = net.JoinHostPort(u.Host, strconv.Itoa(config.Port))
-	}
-	if config.Password != "" {
-		u.User = url.UserPassword(config.User, config.Password)
-	} else if config.User != "" {
-		u.User = url.User(config.User)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(config.Port))
 	}
 	if config.DBName != "" {
-		u.Path = "/" + config.DBName
+		b.WriteByte('/')
+		b.WriteString(percentEncode(config.DBName))
 	}
-	return u.String()
+	return b.String()
+}
+
+// percentEncode escapes every byte except RFC 3986 unreserved characters.
+func percentEncode(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '-' || c == '.' || c == '_' || c == '~' || isPlainIdent(s[i:i+1]) {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&15])
+	}
+	return b.String()
 }

@@ -122,6 +122,8 @@ func TestRedisConnectionString(t *testing.T) {
 		{"user only", gqbd.DBConfig{Host: "cache", User: "app"}, "redis://app@cache"},
 		{"tls", gqbd.DBConfig{Host: "cache", Port: 6380, SSLMode: "require"}, "rediss://cache:6380"},
 		{"ipv6", gqbd.DBConfig{Host: "::1", Port: 6379}, "redis://[::1]:6379"},
+		{"ipv6 no port", gqbd.DBConfig{Host: "::1"}, "redis://[::1]"},
+		{"unicode password", gqbd.DBConfig{Host: "h", Password: "비밀 번호"}, "redis://:%EB%B9%84%EB%B0%80%20%EB%B2%88%ED%98%B8@h"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := gqbd.BuildConnectionString(gqbd.Redis, tc.cfg); got != tc.want {
