@@ -29,6 +29,9 @@ const (
 	// Prometheus is not a SQL database: use PromSelector (see prometheus.go). The
 	// SQL builders return an error for Prometheus.
 	Prometheus DBType = "prometheus"
+	// Qdrant is not a SQL database: use QdrantQuery, QdrantCount and QdrantDelete
+	// (see qdrant.go). The SQL builders return an error for Qdrant.
+	Qdrant DBType = "qdrant"
 )
 
 // DBConfig holds database connection configuration
@@ -38,7 +41,7 @@ type DBConfig struct {
 	User     string
 	Password string
 	DBName   string // For Redis: logical database number, e.g. "0". For MongoDB: default auth database
-	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB/ClickHouse/Oracle/Elasticsearch/Prometheus: any value other than "disable" enables TLS
+	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB/ClickHouse/Oracle/Elasticsearch/Prometheus/Qdrant: any value other than "disable" enables TLS
 	Charset  string // For MySQL/MariaDB: utf8, utf8mb4, etc.
 	FilePath string // For SQLite: path to database file
 }
@@ -135,6 +138,9 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 		return qb
 	case Prometheus:
 		qb.err = fmt.Errorf("Prometheus is not a SQL database; use PromSelector")
+		return qb
+	case Qdrant:
+		qb.err = fmt.Errorf("Qdrant is not a SQL database; use QdrantQuery, QdrantCount or QdrantDelete")
 		return qb
 	}
 	safeTable, err := qb.d.escapeTable(table)

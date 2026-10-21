@@ -2,10 +2,10 @@
 [![Test](https://github.com/donghquinn/gqbd/actions/workflows/test.yml/badge.svg)](https://github.com/donghquinn/gqbd/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/donghquinn/gqbd/branch/main/graph/badge.svg)](https://codecov.io/gh/donghquinn/gqbd)
 
-**GQBD** is a high-performance, low-allocation query builder for Go: SQL for PostgreSQL, MySQL, MariaDB, SQLite, ClickHouse and Oracle, plus command builders for Redis, MongoDB, Elasticsearch and Prometheus. It only builds queries; run them with the driver you already use.
+**GQBD** is a high-performance, low-allocation query builder for Go: SQL for PostgreSQL, MySQL, MariaDB, SQLite, ClickHouse and Oracle, plus command builders for Redis, MongoDB, Elasticsearch, Prometheus and Qdrant. It only builds queries; run them with the driver you already use.
 
 - 🚀 **Low allocations**: single-pass rendering into a pre-sized buffer
-- 🔒 **Injection safe**: parameter binding, identifier escaping, `$`-operator protection for MongoDB, structure-safe JSON for Elasticsearch, and escaped label values for PromQL
+- 🔒 **Injection safe**: parameter binding, identifier escaping, `$`-operator protection for MongoDB, structure-safe JSON for Elasticsearch and Qdrant, and escaped label values for PromQL
 - 📦 **Zero dependencies**: standard library only, no database drivers
 - 🔧 **Fluent API**: chainable methods; errors are collected and returned from `Build()`
 - 🔌 **Connection strings**: DSNs and URIs for every supported database
@@ -44,6 +44,7 @@ rows, err := db.Query(query, args...)
 | MongoDB | `gqbd.MongoDB` | `Mongo*` filters, updates, pipelines | — | — | — | [docs/mongodb.md](docs/mongodb.md) |
 | Elasticsearch | `gqbd.Elasticsearch` | `ES*` search, count, delete-by-query bodies | — | — | — | [docs/elasticsearch.md](docs/elasticsearch.md) |
 | Prometheus | `gqbd.Prometheus` | `PromSelector` PromQL expressions | — | — | — | [docs/prometheus.md](docs/prometheus.md) |
+| Qdrant | `gqbd.Qdrant` | `Qdrant*` REST query, count, delete bodies | — | — | — | [docs/qdrant.md](docs/qdrant.md) |
 
 The SQL databases share one API: see [docs/sql.md](docs/sql.md) for IN, BETWEEN, aggregates, dynamic conditions and identifier escaping.
 
@@ -69,6 +70,7 @@ Run with `go test -bench . -benchmem` (Apple M-series, Go 1.27). See `benchmark_
 - `mongodb.go` - MongoDB find/update/delete and aggregation builders
 - `elasticsearch.go` - Elasticsearch query DSL builders for search, count and delete-by-query
 - `prometheus.go` - PromQL builder: selectors, functions, aggregations and operators
+- `qdrant.go` - Qdrant REST request builders for vector search, count and delete
 - `bson.go` - `gqbd.D`, an ordered document with a minimal BSON encoder (so the driver isn't a dependency)
 
 Database differences live in one dialect table, so adding a SQL database means adding one `dialect` entry.
