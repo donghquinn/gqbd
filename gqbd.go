@@ -2,6 +2,7 @@ package gqbd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +14,8 @@ const (
 	MariaDB    DBType = "mariadb"
 	Mysql      DBType = "mysql"
 	SQLite     DBType = "sqlite"
+	ClickHouse DBType = "clickhouse"
+	Oracle     DBType = "oracle"
 	// Redis is not a SQL database: use the Redis* command builders (see redis.go)
 	// and BuildConnectionString. The SQL builders return an error for Redis.
 	Redis DBType = "redis"
@@ -28,7 +31,7 @@ type DBConfig struct {
 	User     string
 	Password string
 	DBName   string // For Redis: logical database number, e.g. "0". For MongoDB: default auth database
-	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB: any value other than "disable" enables TLS
+	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB/ClickHouse/Oracle: any value other than "disable" enables TLS
 	Charset  string // For MySQL/MariaDB: utf8, utf8mb4, etc.
 	FilePath string // For SQLite: path to database file
 }
@@ -57,6 +60,12 @@ type QueryBuilder struct {
 	err        error
 	data       map[string]interface{}
 	returning  string
+
+	// ClickHouse only
+	final        bool
+	prewhere     []string
+	prewhereArgs []interface{}
+	settings     []string
 }
 
 // BuildSelect creates a new SELECT query builder for the specified database type.
@@ -115,7 +124,7 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 		qb.err = fmt.Errorf("MongoDB is not a SQL database; use MongoFind, MongoUpdate, MongoDelete or MongoAggregate")
 		return qb
 	}
-	safeTable, err := qb.d.escape(table)
+	safeTable, err := qb.d.escapeTable(table)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -197,7 +206,7 @@ func (qb *QueryBuilder) join(kind, joinTable, onCondition string) *QueryBuilder 
 	if qb.err != nil {
 		return qb
 	}
-	safeTable, err := qb.d.escape(joinTable)
+	safeTable, err := qb.d.escapeTable(joinTable)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -207,7 +216,8 @@ func (qb *QueryBuilder) join(kind, joinTable, onCondition string) *QueryBuilder 
 }
 
 // Where adds a WHERE condition with parameter binding.
-// Use ? as the placeholder; it is rendered as $N for PostgreSQL at Build time.
+// Use ? as the placeholder; it is rendered as $N for PostgreSQL and :N for
+// Oracle at Build time.
 // SQL injection safe through proper parameter binding.
 func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuilder {
 	if qb.err != nil {
@@ -431,7 +441,7 @@ func (qb *QueryBuilder) Set(data map[string]interface{}) *QueryBuilder {
 /*
 Returning
 
-@ clause: RETURNING clause string (for PostgreSQL and SQLite)
+@ clause: RETURNING clause string (for PostgreSQL and SQLite; ignored elsewhere)
 @ Return: *QueryBuilder with RETURNING clause set
 */
 func (qb *QueryBuilder) Returning(clause string) *QueryBuilder {
@@ -444,6 +454,86 @@ func (qb *QueryBuilder) Returning(clause string) *QueryBuilder {
 	}
 	qb.returning = clause
 	return qb
+}
+
+func (qb *QueryBuilder) requireClickHouse(method string, ops ...string) bool {
+	if qb.err != nil {
+		return false
+	}
+	if !qb.d.chClauses {
+		qb.err = fmt.Errorf("%s() is only supported for ClickHouse", method)
+		return false
+	}
+	for _, op := range ops {
+		if qb.op == op {
+			return true
+		}
+	}
+	qb.err = fmt.Errorf("%s() cannot be used with %s", method, qb.op)
+	return false
+}
+
+// Final adds the FINAL modifier after the table name (ClickHouse only), which
+// merges rows of ReplacingMergeTree and similar engines at query time.
+func (qb *QueryBuilder) Final() *QueryBuilder {
+	if qb.requireClickHouse("Final", "SELECT") {
+		qb.final = true
+	}
+	return qb
+}
+
+// Prewhere adds a PREWHERE condition (ClickHouse only). Conditions are ANDed and
+// bound like Where.
+func (qb *QueryBuilder) Prewhere(condition string, args ...interface{}) *QueryBuilder {
+	if qb.requireClickHouse("Prewhere", "SELECT") {
+		qb.prewhere = append(qb.prewhere, condition)
+		qb.prewhereArgs = append(qb.prewhereArgs, args...)
+	}
+	return qb
+}
+
+// Setting adds a query-level setting, rendered as SETTINGS name = value
+// (ClickHouse only). value must be a number, bool or string; it is written as an
+// escaped literal because ClickHouse does not accept placeholders there.
+//
+// Example:
+//
+//	gqbd.BuildUpdate(gqbd.ClickHouse, "events").Set(data).Where("id = ?", 1).Setting("mutations_sync", 2)
+func (qb *QueryBuilder) Setting(name string, value interface{}) *QueryBuilder {
+	if !qb.requireClickHouse("Setting", "SELECT", "INSERT", "UPDATE", "DELETE") {
+		return qb
+	}
+	if !isPlainIdent(name) {
+		qb.err = fmt.Errorf("invalid setting name %q", name)
+		return qb
+	}
+	lit, err := clickhouseLiteral(value)
+	if err != nil {
+		qb.err = fmt.Errorf("setting %q: %w", name, err)
+		return qb
+	}
+	qb.settings = append(qb.settings, name+" = "+lit)
+	return qb
+}
+
+func clickhouseLiteral(v interface{}) (string, error) {
+	switch x := v.(type) {
+	case bool:
+		if x {
+			return "1", nil
+		}
+		return "0", nil
+	case string:
+		x = strings.ReplaceAll(x, `\`, `\\`)
+		return "'" + strings.ReplaceAll(x, "'", `\'`) + "'", nil
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprint(x), nil
+	case float32:
+		return strconv.FormatFloat(float64(x), 'g', -1, 32), nil
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64), nil
+	}
+	return "", fmt.Errorf("unsupported value type %T", v)
 }
 
 // Build generates the final SQL query string and parameter arguments.
@@ -470,7 +560,7 @@ func (qb *QueryBuilder) Build() (string, []interface{}, error) {
 /*
 EscapeIdentifier
 
-@ dbType: Database type (PostgreSQL, MariaDB, Mysql, SQLite)
+@ dbType: Database type (PostgreSQL, MariaDB, Mysql, SQLite, ClickHouse, Oracle)
 @ name: Identifier to escape
 @ Return: Escaped identifier and error if any
 */
@@ -501,7 +591,7 @@ ReplacePlaceholders
 */
 func ReplacePlaceholders(dbType DBType, condition string, startIdx int) string {
 	d := dialectFor(dbType)
-	if !d.numbered {
+	if d.numPrefix == 0 {
 		return condition
 	}
 	w := newSQLWriter(d, len(condition)+8)
