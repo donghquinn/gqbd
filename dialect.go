@@ -25,7 +25,10 @@ var (
 	sqliteDialect     = &dialect{quote: '"', returning: true}
 	clickhouseDialect = &dialect{quote: '`', backslashEscape: true, alterUpdate: true, requireWhere: true, chClauses: true}
 	oracleDialect     = &dialect{quote: '"', numPrefix: ':', noTableAS: true, fetchFirst: true}
-	unknownDialect    = &dialect{}
+	// unknownDialect only numbers placeholders, for ReplacePlaceholders and
+	// GeneratePlaceholders. It cannot escape identifiers, so the builders and
+	// EscapeIdentifier reject unknown database types instead of using it.
+	unknownDialect = &dialect{}
 )
 
 func dialectFor(dbType DBType) *dialect {
@@ -169,21 +172,32 @@ func (w *sqlWriter) placeholder() {
 	w.Write(strconv.AppendInt(w.scratch[:0], int64(w.n), 10))
 }
 
-// cond writes a user-supplied condition, converting each ? outside of single-quoted
-// string literals into the dialect's placeholder.
+// cond writes a user-supplied condition, converting each ? into the dialect's
+// placeholder. A ? inside a '...', "..." or `...` quoted string or name is left
+// alone, and ?? is written as a literal ?, for operators such as PostgreSQL's
+// jsonb ?, ?| and ?&.
 func (w *sqlWriter) cond(s string) {
-	inQuote := false
+	var quote byte // the open quote character, or 0
 	start := 0
 	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '\'':
-			inQuote = !inQuote
-		case '?':
-			if inQuote {
-				continue
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && w.d.backslashEscape {
+				i++ // skip the escaped character
+			} else if c == quote {
+				quote = 0
 			}
+		case c == '\'' || c == '"' || c == '`':
+			quote = c
+		case c == '?':
 			w.WriteString(s[start:i])
-			w.placeholder()
+			if i+1 < len(s) && s[i+1] == '?' {
+				w.WriteByte('?')
+				i++
+			} else {
+				w.placeholder()
+			}
 			start = i + 1
 		}
 	}

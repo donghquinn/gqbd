@@ -6,6 +6,30 @@
 
 `Build()` returns `(query, args, err)` and does not modify the builder, so it can be called more than once. Arguments are always returned in the order their placeholders appear in the query.
 
+The database type must be one of the `gqbd` constants. Any other value (for example `gqbd.DBType("postgresql")` read from a config file) makes `Build()` return an error, because gqbd wouldn't know how to escape identifiers for it.
+
+## Placeholders
+
+Write `?` for every parameter; gqbd renders it as `$1`, `:1` or `?` for the target database. A `?` inside a quoted string or name (`'...'`, `"..."`, `` `...` ``) is left alone. Write `??` for a literal `?`, such as PostgreSQL's jsonb operators:
+
+```go
+gqbd.BuildSelect(gqbd.PostgreSQL, "docs").Where("data ?? ?", "key").Where("tags ??| ?", pq.Array(tags))
+// Query: SELECT * FROM "docs" WHERE data ? $1 AND tags ?| $2
+```
+
+## Reusing a Base Query
+
+Chained methods modify the builder they are called on. To extend a shared base query, `Clone()` it first:
+
+```go
+base := gqbd.BuildSelect(gqbd.PostgreSQL, "orders").Where("tenant_id = ?", tenantID)
+
+open, args, err := base.Clone().Where("status = ?", "open").Build()
+// base is unchanged and can be cloned again
+```
+
+A builder is not safe for concurrent use while it is being built. Clone a shared base in each goroutine, or finish building before sharing it: `Build()` itself doesn't modify the builder.
+
 ## IN Clause
 
 ```go

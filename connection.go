@@ -9,8 +9,8 @@ import (
 // database type and configuration: a DSN for sql.Open(), a redis:// URL for
 // Redis clients (e.g. redis.ParseURL in go-redis), a mongodb:// URI for
 // options.Client().ApplyURI, a clickhouse:// DSN for clickhouse-go, an
-// oracle:// URL for go-ora, or an http(s):// address for go-elasticsearch or
-// the Prometheus HTTP API client.
+// oracle:// URL for go-ora, or an http(s):// address for go-elasticsearch,
+// the Prometheus HTTP API client or the Qdrant REST API.
 //
 // Examples:
 //
@@ -34,6 +34,11 @@ func BuildConnectionString(dbType DBType, config DBConfig) string {
 	case Oracle:
 		return buildOracleConnectionString(config)
 	case Elasticsearch, Prometheus:
+		return buildHTTPConnectionString(config)
+	case Qdrant:
+		// Qdrant authenticates with an api-key header, not basic auth, so the
+		// credentials are left out of the address.
+		config.User, config.Password = "", ""
 		return buildHTTPConnectionString(config)
 	default:
 		return buildMySQLConnectionString(config)

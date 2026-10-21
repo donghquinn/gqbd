@@ -85,12 +85,10 @@ func TestEscapeIdentifierTableASAliasMariaDB(t *testing.T) {
 }
 
 func TestEscapeIdentifierUnknownDBType(t *testing.T) {
-	result, err := gqbd.EscapeIdentifier(gqbd.DBType("unknown"), "mycolumn")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "mycolumn" {
-		t.Errorf("expected unescaped identifier for unknown DB type, got %s", result)
+	// An unknown type has no quoting rules, so escaping must fail rather than
+	// return the name unescaped.
+	if _, err := gqbd.EscapeIdentifier(gqbd.DBType("unknown"), "mycolumn"); err == nil {
+		t.Fatal("expected an error for an unknown DB type")
 	}
 }
 
@@ -122,42 +120,19 @@ func TestBuildWithNoOperation(t *testing.T) {
 	}
 }
 
-// ---- Unknown DBType falls through to MySQL in build* ----
+// ---- Unknown DBType is rejected by the builders ----
 
-func TestBuildSelectUnknownDBType(t *testing.T) {
-	qb := gqbd.BuildSelect(gqbd.DBType("custom"), "users", "id")
-	query, _, err := qb.Build()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// default falls back to MySQL (backtick quoting)
-	if !strings.Contains(query, "SELECT") {
-		t.Errorf("expected SELECT query, got %s", query)
-	}
-}
-
-func TestBuildInsertUnknownDBType(t *testing.T) {
-	qb := gqbd.BuildInsert(gqbd.DBType("custom"), "users").
-		Values(map[string]interface{}{"name": "alice"})
-	query, _, err := qb.Build()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(query, "INSERT INTO") {
-		t.Errorf("expected INSERT INTO, got %s", query)
-	}
-}
-
-func TestBuildUpdateUnknownDBType(t *testing.T) {
-	qb := gqbd.BuildUpdate(gqbd.DBType("custom"), "users").
-		Set(map[string]interface{}{"name": "bob"}).
-		Where("id = ?", 1)
-	query, _, err := qb.Build()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(query, "UPDATE") {
-		t.Errorf("expected UPDATE, got %s", query)
+func TestBuildersRejectUnknownDBType(t *testing.T) {
+	for _, qb := range []*gqbd.QueryBuilder{
+		gqbd.BuildSelect(gqbd.DBType("postgresql"), "users; DROP TABLE users; --", "id"),
+		gqbd.BuildInsert(gqbd.DBType("custom"), "users").Values(map[string]interface{}{"name": "alice"}),
+		gqbd.BuildUpdate(gqbd.DBType("custom"), "users").Set(map[string]interface{}{"name": "bob"}).Where("id = ?", 1),
+		gqbd.BuildDelete(gqbd.DBType(""), "users").Where("id = ?", 1),
+	} {
+		query, _, err := qb.Build()
+		if err == nil || !strings.Contains(err.Error(), "unsupported database type") {
+			t.Errorf("expected unsupported database type error, got query %q, err %v", query, err)
+		}
 	}
 }
 
