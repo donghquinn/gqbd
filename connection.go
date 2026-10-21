@@ -7,8 +7,8 @@ import (
 
 // BuildConnectionString creates a database connection string based on the
 // database type and configuration: a DSN for sql.Open(), a redis:// URL for
-// Redis clients (e.g. redis.ParseURL in go-redis), or a mongodb:// URI for
-// options.Client().ApplyURI.
+// Redis clients (e.g. redis.ParseURL in go-redis), a mongodb:// URI for
+// options.Client().ApplyURI, or a clickhouse:// DSN for clickhouse-go.
 //
 // Examples:
 //
@@ -27,6 +27,8 @@ func BuildConnectionString(dbType DBType, config DBConfig) string {
 		return buildRedisConnectionString(config)
 	case MongoDB:
 		return buildMongoDBConnectionString(config)
+	case ClickHouse:
+		return buildClickHouseConnectionString(config)
 	default:
 		return buildMySQLConnectionString(config)
 	}
@@ -107,6 +109,20 @@ func buildSQLiteConnectionString(config DBConfig) string {
 		return config.FilePath
 	}
 	return ":memory:"
+}
+
+// buildClickHouseConnectionString returns the clickhouse-go v2 DSN
+// clickhouse://[user:password@]host[:port]/[db][?secure=true].
+func buildClickHouseConnectionString(config DBConfig) string {
+	var b strings.Builder
+	b.WriteString("clickhouse://")
+	writeURLAuthority(&b, config, "localhost")
+	b.WriteByte('/')
+	b.WriteString(percentEncode(config.DBName))
+	if config.SSLMode != "" && config.SSLMode != "disable" {
+		b.WriteString("?secure=true")
+	}
+	return b.String()
 }
 
 // buildMongoDBConnectionString returns mongodb://[user:password@]host[:port]/[db][?tls=true].

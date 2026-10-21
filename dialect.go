@@ -8,16 +8,21 @@ import (
 
 // dialect captures everything that differs between the supported SQL databases.
 type dialect struct {
-	quote     byte // identifier quote character; 0 leaves identifiers unescaped
-	numbered  bool // $1, $2, ... placeholders instead of ?
-	returning bool // supports INSERT ... RETURNING
+	quote           byte // identifier quote character; 0 leaves identifiers unescaped
+	numbered        bool // $1, $2, ... placeholders instead of ?
+	returning       bool // supports INSERT ... RETURNING
+	backslashEscape bool // backslash is an escape character inside quoted identifiers
+	alterUpdate     bool // UPDATE is written as ALTER TABLE ... UPDATE (a mutation)
+	requireWhere    bool // UPDATE and DELETE must have a WHERE clause
+	chClauses       bool // supports ClickHouse's FINAL, PREWHERE and SETTINGS
 }
 
 var (
-	postgresDialect = &dialect{quote: '"', numbered: true, returning: true}
-	mysqlDialect    = &dialect{quote: '`'}
-	sqliteDialect   = &dialect{quote: '"', returning: true}
-	unknownDialect  = &dialect{}
+	postgresDialect   = &dialect{quote: '"', numbered: true, returning: true}
+	mysqlDialect      = &dialect{quote: '`'}
+	sqliteDialect     = &dialect{quote: '"', returning: true}
+	clickhouseDialect = &dialect{quote: '`', backslashEscape: true, alterUpdate: true, requireWhere: true, chClauses: true}
+	unknownDialect    = &dialect{}
 )
 
 func dialectFor(dbType DBType) *dialect {
@@ -28,18 +33,24 @@ func dialectFor(dbType DBType) *dialect {
 		return mysqlDialect
 	case SQLite:
 		return sqliteDialect
+	case ClickHouse:
+		return clickhouseDialect
 	default:
 		return unknownDialect
 	}
 }
 
 // quoteName wraps a single identifier in the dialect's quote character, doubling
-// any embedded quote characters so the identifier cannot break out of its quotes.
+// any embedded quote characters (and escaping backslashes where they are escape
+// characters) so the identifier cannot break out of its quotes.
 func (d *dialect) quoteName(name string) string {
 	if d.quote == 0 {
 		return name
 	}
 	q := string(d.quote)
+	if d.backslashEscape && strings.IndexByte(name, '\\') >= 0 {
+		name = strings.ReplaceAll(name, `\`, `\\`)
+	}
 	if strings.IndexByte(name, d.quote) >= 0 {
 		name = strings.ReplaceAll(name, q, q+q)
 	}

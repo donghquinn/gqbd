@@ -7,7 +7,8 @@ import (
 
 func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 	w := newSQLWriter(qb.d, 32+len(qb.table)+len(qb.orderBy)+
-		totalLen(qb.columns)+totalLen(qb.joins)+totalLen(qb.where)+totalLen(qb.groupBy)+totalLen(qb.having))
+		totalLen(qb.columns)+totalLen(qb.joins)+totalLen(qb.where)+totalLen(qb.groupBy)+totalLen(qb.having)+
+		totalLen(qb.prewhere)+totalLen(qb.settings))
 
 	w.WriteString("SELECT ")
 	if qb.distinct {
@@ -16,9 +17,16 @@ func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 	w.list(qb.columns, ", ")
 	w.WriteString(" FROM ")
 	w.WriteString(qb.table)
+	if qb.final {
+		w.WriteString(" FINAL")
+	}
 	if len(qb.joins) > 0 {
 		w.WriteByte(' ')
 		w.list(qb.joins, " ")
+	}
+	if len(qb.prewhere) > 0 {
+		w.WriteString(" PREWHERE ")
+		w.condList(qb.prewhere, " AND ")
 	}
 	qb.writeWhere(w)
 	if len(qb.groupBy) > 0 {
@@ -34,7 +42,8 @@ func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 		w.WriteString(qb.orderBy)
 	}
 
-	args := make([]interface{}, 0, len(qb.whereArgs)+len(qb.havingArgs)+2)
+	args := make([]interface{}, 0, len(qb.prewhereArgs)+len(qb.whereArgs)+len(qb.havingArgs)+2)
+	args = append(args, qb.prewhereArgs...)
 	args = append(args, qb.whereArgs...)
 	args = append(args, qb.havingArgs...)
 	if qb.limit > 0 {
@@ -47,6 +56,7 @@ func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 		w.placeholder()
 		args = append(args, qb.offset)
 	}
+	qb.writeSettings(w)
 	return w.String(), args, nil
 }
 
@@ -72,7 +82,9 @@ func (qb *QueryBuilder) buildInsert() (string, []interface{}, error) {
 		w.WriteString(safeCol)
 		args[i] = qb.data[key]
 	}
-	w.WriteString(") VALUES (")
+	w.WriteByte(')')
+	qb.writeSettings(w)
+	w.WriteString(" VALUES (")
 	w.placeholders(len(keys))
 	w.WriteByte(')')
 	if qb.returning != "" && qb.d.returning {
@@ -86,13 +98,22 @@ func (qb *QueryBuilder) buildUpdate() (string, []interface{}, error) {
 	if qb.data == nil {
 		return "", nil, fmt.Errorf("no data provided for UPDATE")
 	}
+	if err := qb.checkRequiredWhere("UPDATE"); err != nil {
+		return "", nil, err
+	}
 	keys := sortedKeys(qb.data)
-	w := newSQLWriter(qb.d, 32+len(qb.table)+totalLen(keys)+10*len(keys)+totalLen(qb.where))
+	w := newSQLWriter(qb.d, 32+len(qb.table)+totalLen(keys)+10*len(keys)+totalLen(qb.where)+totalLen(qb.settings))
 	args := make([]interface{}, len(keys), len(keys)+len(qb.whereArgs))
 
-	w.WriteString("UPDATE ")
-	w.WriteString(qb.table)
-	w.WriteString(" SET ")
+	if qb.d.alterUpdate {
+		w.WriteString("ALTER TABLE ")
+		w.WriteString(qb.table)
+		w.WriteString(" UPDATE ")
+	} else {
+		w.WriteString("UPDATE ")
+		w.WriteString(qb.table)
+		w.WriteString(" SET ")
+	}
 	for i, key := range keys {
 		safeCol, err := qb.d.escape(key)
 		if err != nil {
@@ -107,15 +128,34 @@ func (qb *QueryBuilder) buildUpdate() (string, []interface{}, error) {
 		args[i] = qb.data[key]
 	}
 	qb.writeWhere(w)
+	qb.writeSettings(w)
 	return w.String(), append(args, qb.whereArgs...), nil
 }
 
 func (qb *QueryBuilder) buildDelete() (string, []interface{}, error) {
-	w := newSQLWriter(qb.d, 20+len(qb.table)+totalLen(qb.where))
+	if err := qb.checkRequiredWhere("DELETE"); err != nil {
+		return "", nil, err
+	}
+	w := newSQLWriter(qb.d, 20+len(qb.table)+totalLen(qb.where)+totalLen(qb.settings))
 	w.WriteString("DELETE FROM ")
 	w.WriteString(qb.table)
 	qb.writeWhere(w)
+	qb.writeSettings(w)
 	return w.String(), append([]interface{}(nil), qb.whereArgs...), nil
+}
+
+func (qb *QueryBuilder) checkRequiredWhere(op string) error {
+	if qb.d.requireWhere && len(qb.where) == 0 {
+		return fmt.Errorf("%s requires a WHERE clause for %s; use Where(\"1 = 1\") to affect every row", qb.dbType, op)
+	}
+	return nil
+}
+
+func (qb *QueryBuilder) writeSettings(w *sqlWriter) {
+	if len(qb.settings) > 0 {
+		w.WriteString(" SETTINGS ")
+		w.list(qb.settings, ", ")
+	}
 }
 
 func (qb *QueryBuilder) writeWhere(w *sqlWriter) {

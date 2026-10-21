@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md)
 
-`BuildSelect`, `BuildInsert`, `BuildUpdate` and `BuildDelete` work the same way for every SQL database; only the placeholder and identifier quoting style differ (see [PostgreSQL](postgresql.md), [MySQL / MariaDB](mysql.md), [SQLite](sqlite.md)). The examples below show PostgreSQL output.
+`BuildSelect`, `BuildInsert`, `BuildUpdate` and `BuildDelete` work the same way for every SQL database; only the placeholder and identifier quoting style differ (see [PostgreSQL](postgresql.md), [MySQL / MariaDB](mysql.md), [SQLite](sqlite.md), [ClickHouse](clickhouse.md)). The examples below show PostgreSQL output.
 
 `Build()` returns `(query, args, err)` and does not modify the builder, so it can be called more than once. Arguments are always returned in the order their placeholders appear in the query.
 
