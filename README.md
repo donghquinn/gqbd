@@ -3,12 +3,12 @@
 [![codecov](https://codecov.io/gh/donghquinn/gqbd/branch/main/graph/badge.svg)](https://codecov.io/gh/donghquinn/gqbd)
 
 ## Introduction
-**GQBD** is a high-performance, zero-allocation SQL query builder for Go, inspired by gdct design principles.
+**GQBD** is a high-performance, low-allocation SQL query builder (plus a Redis command builder) for Go, inspired by gdct design principles.
 
 ✨ **Key Features:**
-- 🚀 **Zero allocations** in critical query building paths
+- 🚀 **Low allocations**: single-pass rendering into a pre-sized buffer
 - 🔒 **SQL injection safe** with automatic parameter binding and identifier escaping  
-- 🎯 **Multi-database support**: PostgreSQL, MySQL, MariaDB, SQLite
+- 🎯 **Multi-database support**: PostgreSQL, MySQL, MariaDB, SQLite, and Redis
 - ⚡ **Performance optimized** - designed for high-throughput applications
 - 📦 **Zero dependencies** - pure Go implementation
 - 🔧 **Fluent API** - chainable method design for readable code
@@ -22,7 +22,7 @@ go get github.com/donghquinn/gqbd
 ## Performance & Features
 
 🏆 **Performance Benefits:**
-- Zero allocations in query building (similar to gdct)
+- Low allocations in query building (see [Benchmarks](#benchmarks))
 - Optimized string building and parameter handling
 - Minimal overhead compared to other query builders
 - Built for high-throughput, low-latency applications
@@ -35,7 +35,8 @@ go get github.com/donghquinn/gqbd
 - ✅ **Advanced Clauses**: IN, BETWEEN, aggregate functions, DISTINCT
 - ✅ **Security**: Automatic SQL injection prevention
 - ✅ **Cross-Database**: PostgreSQL ($N), MySQL/MariaDB/SQLite (?) placeholder formats
-- ✅ **Connection Strings**: Built-in database connection string generation
+- ✅ **Connection Strings**: Built-in database connection string generation (including `redis://` URLs)
+- ✅ **Redis**: Command builders for strings, hashes, lists, sets, sorted sets, TTLs and SCAN
 
 ## Quick Start
 
@@ -87,8 +88,8 @@ func main() {
     fmt.Printf("Args: %v\n", args)
     
     // Output:
-    // Query: SELECT "e"."id", "e"."name", "u"."username" FROM "example_table" e LEFT JOIN "user_table" u ON u.user_id = e.id WHERE e.status = $1 ORDER BY "e"."created_at" DESC LIMIT $2 OFFSET $3
-    // Args: [active 10 0]
+    // Query: SELECT e."id", e."name", u."username" FROM "example_table" e LEFT JOIN "user_table" u ON u.user_id = e.id WHERE e.status = $1 ORDER BY e."created_at" DESC LIMIT $2
+    // Args: [active 10]   (OFFSET 0 is omitted)
 }
 ```
 
@@ -129,8 +130,8 @@ qb := gqbd.BuildInsert(gqbd.PostgreSQL, "users").
     Returning("id, created_at")
 
 query, args, err := qb.Build()
-// Query: INSERT INTO "users" ("name", "email", "active") VALUES ($1, $2, $3) RETURNING id, created_at
-// Args: [John Doe john@example.com true]
+// Query: INSERT INTO "users" ("active", "email", "name") VALUES ($1, $2, $3) RETURNING id, created_at
+// Args: [true john@example.com John Doe]   (columns are sorted for deterministic output)
 ```
 
 #### UPDATE Query
@@ -181,8 +182,8 @@ qb := gqbd.BuildInsert(gqbd.MariaDB, "products").
     Values(data)
 
 query, args, err := qb.Build()
-// Query: INSERT INTO `products` (`name`, `price`, `category_id`) VALUES (?, ?, ?)
-// Args: [New Product 99.99 5]
+// Query: INSERT INTO `products` (`category_id`, `name`, `price`) VALUES (?, ?, ?)
+// Args: [5 New Product 99.99]
 ```
 
 ### SQLite Examples
@@ -218,8 +219,8 @@ qb := gqbd.BuildInsert(gqbd.SQLite, "users").
     Returning("id, name")
 
 query, args, err := qb.Build()
-// Query: INSERT INTO "users" ("name", "email", "age") VALUES (?, ?, ?) RETURNING id, name
-// Args: [Alice alice@example.com 28]
+// Query: INSERT INTO "users" ("age", "email", "name") VALUES (?, ?, ?) RETURNING id, name
+// Args: [28 alice@example.com Alice]
 ```
 
 #### UPDATE Query
@@ -236,6 +237,47 @@ query, args, err := qb.Build()
 // Query: UPDATE "users" SET "name" = ?, "status" = ? WHERE id = ?
 // Args: [Updated Name inactive 1]
 ```
+
+### Redis Examples
+
+Redis is not a SQL database, so it has its own command builders instead of `BuildSelect`/`BuildInsert`/... (those return an error for `gqbd.Redis`). Like the SQL builders, they have no client dependency: `Build()` returns the command name and its arguments for any Redis client.
+
+```go
+// SET with TTL and NX
+cmd, args, err := gqbd.RedisSet(gqbd.RedisKey("session", 42), token).
+    TTL(30 * time.Minute).
+    NX().
+    Build()
+// cmd:  "SET"
+// args: [session:42 <token> EX 1800 NX]
+
+conn.Do(cmd, args...) // redigo
+
+// go-redis takes the name and args as one slice
+all, err := gqbd.RedisHSet("user:1", map[string]interface{}{
+    "name": "Kim",
+    "age":  30,
+}).BuildArgs()
+// all: [HSET user:1 age 30 name Kim]   (fields are sorted for deterministic output)
+rdb.Do(ctx, all...)
+```
+
+Available builders:
+
+| Builder | Command |
+|---------|---------|
+| `RedisGet(key)` / `RedisSet(key, value)` | `GET` / `SET` (chain `.TTL(d)`, `.NX()`, `.XX()`) |
+| `RedisDel(keys...)` / `RedisExists(keys...)` | `DEL` / `EXISTS` |
+| `RedisExpire(key, d)` | `EXPIRE` (or `PEXPIRE` for sub-second durations) |
+| `RedisIncr(key)` / `RedisIncrBy(key, n)` | `INCR` / `INCRBY` |
+| `RedisHSet(key, map)` / `RedisHGet` / `RedisHMGet` / `RedisHGetAll` / `RedisHDel` | Hash commands |
+| `RedisLPush` / `RedisRPush` / `RedisLRange` | List commands |
+| `RedisSAdd` / `RedisSMembers` | Set commands |
+| `RedisZAdd(key, map[string]float64)` / `RedisZRange` | Sorted set commands |
+| `RedisScan(cursor)` | `SCAN` (chain `.Match(pattern)`, `.Count(n)`) |
+| `NewRedisCommand(name, args...)` | Any other command (chain `.Arg(...)`) |
+
+`RedisKey("user", 42, "profile")` joins key parts with `:` → `user:42:profile`.
 
 ## Database Connection Strings
 
@@ -281,6 +323,17 @@ sqliteDSN := gqbd.BuildConnectionString(gqbd.SQLite, sqliteConfig)
 sqliteMemConfig := gqbd.DBConfig{} // Empty config
 sqliteMemDSN := gqbd.BuildConnectionString(gqbd.SQLite, sqliteMemConfig)
 // Result: ":memory:"
+
+// Redis URL (for go-redis redis.ParseURL, etc.)
+redisConfig := gqbd.DBConfig{
+    Host:     "localhost",
+    Port:     6379,
+    Password: "secret",
+    DBName:   "0",       // logical database number
+    SSLMode:  "disable", // anything else selects rediss://
+}
+redisURL := gqbd.BuildConnectionString(gqbd.Redis, redisConfig)
+// Result: "redis://:secret@localhost:6379/0"
 ```
 
 ### Complete Database Setup Example
@@ -383,7 +436,7 @@ qb := gqbd.BuildSelect(gqbd.PostgreSQL, "orders", "customer_id").
     Having("COUNT(*) > ?", 5)
 
 query, args, err := qb.Build()
-// Query: SELECT "customer_id", COUNT("*"), SUM("total") FROM "orders" GROUP BY "customer_id" HAVING COUNT(*) > $1
+// Query: SELECT "customer_id", COUNT(*), SUM("total") FROM "orders" GROUP BY "customer_id" HAVING COUNT(*) > $1
 ```
 
 ## Database Driver Integration
@@ -461,31 +514,24 @@ func querySQLite() {
 | MySQL | `gqbd.Mysql` | `?, ?, ?...` | `` `identifier` `` | ❌ No |
 | MariaDB | `gqbd.MariaDB` | `?, ?, ?...` | `` `identifier` `` | ❌ No |
 | SQLite | `gqbd.SQLite` | `?, ?, ?...` | `"identifier"` | ✅ Yes (3.35.0+) |
+| Redis | `gqbd.Redis` | — (command builders) | — | — |
 
-## Performance Comparison
+## Benchmarks
 
-GQBD is designed with the same performance principles as gdct:
+Run with `go test -bench . -benchmem` (Apple M-series, Go 1.27). See `benchmark_test.go` for the queries.
 
-```go
-// Benchmark example - zero allocations in hot path
-func BenchmarkQueryBuilder(b *testing.B) {
-    for i := 0; i < b.N; i++ {
-        query, args, _ := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name").
-            Where("active = ?", true).
-            Where("age > ?", 21).
-            OrderBy("created_at", "DESC", nil).
-            Limit(100).
-            Build()
-        _ = query
-        _ = args
-    }
-}
-```
+| Benchmark | ns/op | B/op | allocs/op |
+|-----------|------:|-----:|----------:|
+| SELECT, PostgreSQL (join, 3 WHERE, ORDER BY, LIMIT/OFFSET) | 703 | 1680 | 36 |
+| SELECT, MySQL (same query) | 681 | 1680 | 36 |
+| INSERT, PostgreSQL (4 columns, RETURNING) | 315 | 616 | 10 |
+| UPDATE, PostgreSQL (3 columns, 2 WHERE) | 336 | 704 | 13 |
+| DELETE, MySQL | 114 | 440 | 7 |
 
 ## Why Choose GQBD?
 
 🎯 **Same design philosophy as gdct**:
-- Zero allocations in critical paths
+- Low allocations in critical paths
 - SQL injection prevention by design
 - Cross-database compatibility
 - Pure query building (no database connections)
@@ -508,18 +554,13 @@ func BenchmarkQueryBuilder(b *testing.B) {
 
 ## Project Structure
 
-The codebase is organized for maintainability and database-specific optimizations:
+- `gqbd.go` - Public API: builder constructors and chainable clause methods
+- `build.go` - Renders SELECT/INSERT/UPDATE/DELETE in a single pass
+- `dialect.go` - Per-database differences (identifier quoting, placeholders, RETURNING) and the SQL writer
+- `connection.go` - Connection string generation
+- `redis.go` - Redis command builders
 
-- `gqbd.go` - Main API, shared logic, and database selection
-- `postgres.go` - PostgreSQL-specific query building methods
-- `mariadb.go` - MySQL/MariaDB-specific query building methods  
-- `sqlite.go` - SQLite-specific query building methods
-
-This separation allows for:
-- Database-specific optimizations
-- Clean, maintainable code
-- Easy addition of new database types
-- Consistent API across all databases
+Database differences live in one dialect table, so adding a SQL database means adding one `dialect` entry.
 
 ## Contributing
 
