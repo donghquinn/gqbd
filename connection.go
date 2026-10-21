@@ -8,8 +8,8 @@ import (
 // BuildConnectionString creates a database connection string based on the
 // database type and configuration: a DSN for sql.Open(), a redis:// URL for
 // Redis clients (e.g. redis.ParseURL in go-redis), a mongodb:// URI for
-// options.Client().ApplyURI, a clickhouse:// DSN for clickhouse-go, or an
-// oracle:// URL for go-ora.
+// options.Client().ApplyURI, a clickhouse:// DSN for clickhouse-go, an
+// oracle:// URL for go-ora, or an http(s):// address for go-elasticsearch.
 //
 // Examples:
 //
@@ -32,6 +32,8 @@ func BuildConnectionString(dbType DBType, config DBConfig) string {
 		return buildClickHouseConnectionString(config)
 	case Oracle:
 		return buildOracleConnectionString(config)
+	case Elasticsearch:
+		return buildElasticsearchConnectionString(config)
 	default:
 		return buildMySQLConnectionString(config)
 	}
@@ -140,6 +142,20 @@ func buildOracleConnectionString(config DBConfig) string {
 	if config.SSLMode != "" && config.SSLMode != "disable" {
 		b.WriteString("?ssl=true")
 	}
+	return b.String()
+}
+
+// buildElasticsearchConnectionString returns http://[user:password@]host[:port],
+// or https:// when SSLMode is set to anything other than "disable".
+// go-elasticsearch uses the credentials in the address for basic auth.
+func buildElasticsearchConnectionString(config DBConfig) string {
+	var b strings.Builder
+	if config.SSLMode != "" && config.SSLMode != "disable" {
+		b.WriteString("https://")
+	} else {
+		b.WriteString("http://")
+	}
+	writeURLAuthority(&b, config, "localhost")
 	return b.String()
 }
 
