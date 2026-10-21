@@ -22,6 +22,13 @@ const (
 	// MongoDB is not a SQL database: use MongoFind, MongoUpdate, MongoDelete and
 	// MongoAggregate (see mongodb.go). The SQL builders return an error for MongoDB.
 	MongoDB DBType = "mongodb"
+	// Elasticsearch is not a SQL database: use ESSearch, ESCount and
+	// ESDeleteByQuery (see elasticsearch.go). The SQL builders return an error
+	// for Elasticsearch.
+	Elasticsearch DBType = "elasticsearch"
+	// Prometheus is not a SQL database: use PromSelector (see prometheus.go). The
+	// SQL builders return an error for Prometheus.
+	Prometheus DBType = "prometheus"
 )
 
 // DBConfig holds database connection configuration
@@ -31,7 +38,7 @@ type DBConfig struct {
 	User     string
 	Password string
 	DBName   string // For Redis: logical database number, e.g. "0". For MongoDB: default auth database
-	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB/ClickHouse/Oracle: any value other than "disable" enables TLS
+	SSLMode  string // For PostgreSQL: disable, require, verify-ca, verify-full. For Redis/MongoDB/ClickHouse/Oracle/Elasticsearch/Prometheus: any value other than "disable" enables TLS
 	Charset  string // For MySQL/MariaDB: utf8, utf8mb4, etc.
 	FilePath string // For SQLite: path to database file
 }
@@ -122,6 +129,12 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 		return qb
 	case MongoDB:
 		qb.err = fmt.Errorf("MongoDB is not a SQL database; use MongoFind, MongoUpdate, MongoDelete or MongoAggregate")
+		return qb
+	case Elasticsearch:
+		qb.err = fmt.Errorf("Elasticsearch is not a SQL database; use ESSearch, ESCount or ESDeleteByQuery")
+		return qb
+	case Prometheus:
+		qb.err = fmt.Errorf("Prometheus is not a SQL database; use PromSelector")
 		return qb
 	}
 	safeTable, err := qb.d.escapeTable(table)
