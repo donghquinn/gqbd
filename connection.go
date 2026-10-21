@@ -9,7 +9,8 @@ import (
 // database type and configuration: a DSN for sql.Open(), a redis:// URL for
 // Redis clients (e.g. redis.ParseURL in go-redis), a mongodb:// URI for
 // options.Client().ApplyURI, a clickhouse:// DSN for clickhouse-go, an
-// oracle:// URL for go-ora, or an http(s):// address for go-elasticsearch.
+// oracle:// URL for go-ora, or an http(s):// address for go-elasticsearch or
+// the Prometheus HTTP API client.
 //
 // Examples:
 //
@@ -32,8 +33,8 @@ func BuildConnectionString(dbType DBType, config DBConfig) string {
 		return buildClickHouseConnectionString(config)
 	case Oracle:
 		return buildOracleConnectionString(config)
-	case Elasticsearch:
-		return buildElasticsearchConnectionString(config)
+	case Elasticsearch, Prometheus:
+		return buildHTTPConnectionString(config)
 	default:
 		return buildMySQLConnectionString(config)
 	}
@@ -145,10 +146,10 @@ func buildOracleConnectionString(config DBConfig) string {
 	return b.String()
 }
 
-// buildElasticsearchConnectionString returns http://[user:password@]host[:port],
-// or https:// when SSLMode is set to anything other than "disable".
-// go-elasticsearch uses the credentials in the address for basic auth.
-func buildElasticsearchConnectionString(config DBConfig) string {
+// buildHTTPConnectionString returns http://[user:password@]host[:port], or
+// https:// when SSLMode is set to anything other than "disable". go-elasticsearch
+// and net/http (used by the Prometheus client) send the credentials as basic auth.
+func buildHTTPConnectionString(config DBConfig) string {
 	var b strings.Builder
 	if config.SSLMode != "" && config.SSLMode != "disable" {
 		b.WriteString("https://")
