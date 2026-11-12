@@ -2,6 +2,7 @@ package gqbd
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -682,23 +683,32 @@ func unknownDBTypeError(dbType DBType) error {
 // The Values/Set map is shared with the original, not copied; Values and Set
 // replace it rather than modify it.
 func (qb *QueryBuilder) Clone() *QueryBuilder {
+	// Builders only ever append to their slices, so the copy can share the
+	// backing arrays: clipping them to their length makes the first append on
+	// either side copy instead of writing into the other's elements.
 	c := *qb
-	c.columns = append([]ident(nil), qb.columns...)
-	c.joins = append([]joinClause(nil), qb.joins...)
-	c.where = append([]string(nil), qb.where...)
-	c.whereArgs = append([]interface{}(nil), qb.whereArgs...)
-	c.groupBy = append([]ident(nil), qb.groupBy...)
-	c.having = append([]string(nil), qb.having...)
-	c.havingArgs = append([]interface{}(nil), qb.havingArgs...)
-	if qb.ch != nil {
-		c.ch = &clickhouseClauses{
-			final:        qb.ch.final,
-			prewhere:     append([]string(nil), qb.ch.prewhere...),
-			prewhereArgs: append([]interface{}(nil), qb.ch.prewhereArgs...),
-			settings:     append([]string(nil), qb.ch.settings...),
-		}
-	}
+	c.columns = slices.Clip(qb.columns)
+	c.joins = slices.Clip(qb.joins)
+	c.where = slices.Clip(qb.where)
+	c.whereArgs = slices.Clip(qb.whereArgs)
+	c.groupBy = slices.Clip(qb.groupBy)
+	c.having = slices.Clip(qb.having)
+	c.havingArgs = slices.Clip(qb.havingArgs)
+	c.ch = qb.ch.clone()
 	return &c
+}
+
+// clone copies ch the way Clone copies a builder; a nil ch stays nil.
+func (ch *clickhouseClauses) clone() *clickhouseClauses {
+	if ch == nil {
+		return nil
+	}
+	return &clickhouseClauses{
+		final:        ch.final,
+		prewhere:     slices.Clip(ch.prewhere),
+		prewhereArgs: slices.Clip(ch.prewhereArgs),
+		settings:     slices.Clip(ch.settings),
+	}
 }
 
 /*

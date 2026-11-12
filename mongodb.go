@@ -32,17 +32,36 @@ type MongoQuery struct {
 type MongoBuilder struct {
 	op         string
 	collection string
-	fields     map[string]map[string]interface{} // field -> operator -> value
+	conds      []mongoOp // filter operators in the order they were added
 	raw        map[string]interface{}
 	ors        [][]interface{}
 	sort       D
-	projection map[string]interface{}
+	projection D // field -> 1 or 0; a later entry for the same field wins
+	projected  bool
 	limit      int64
 	skip       int64
-	update     map[string]map[string]interface{} // operator -> field -> value
-	updated    map[string]string                 // field -> operator, to detect conflicts
+	updates    []mongoOp // update operators in the order they were added
 	upsert     bool
 	err        error
+}
+
+// mongoOp is one {field: {op: value}} filter condition or {op: {field: value}}
+// update. The builder keeps them in slices rather than nested maps, which are
+// built only by Build; filters and updates rarely have more than a handful of
+// fields, so duplicates are found by a linear scan.
+type mongoOp struct {
+	field, op string
+	value     interface{}
+}
+
+// hasField reports whether the filter has a condition on field.
+func (b *MongoBuilder) hasField(field string) bool {
+	for _, c := range b.conds {
+		if c.field == field {
+			return true
+		}
+	}
+	return false
 }
 
 // MongoFind creates a builder for find queries (Find, FindOne, CountDocuments).
@@ -85,19 +104,16 @@ func (b *MongoBuilder) addOp(field, op string, value interface{}) *MongoBuilder 
 		b.err = err
 		return b
 	}
-	if b.fields == nil {
-		b.fields = make(map[string]map[string]interface{})
+	for _, c := range b.conds {
+		if c.field == field && c.op == op {
+			b.err = fmt.Errorf("duplicate %s on field %q", op, field)
+			return b
+		}
 	}
-	ops := b.fields[field]
-	if ops == nil {
-		ops = make(map[string]interface{}, 1)
-		b.fields[field] = ops
+	if b.conds == nil {
+		b.conds = make([]mongoOp, 0, 4)
 	}
-	if _, dup := ops[op]; dup {
-		b.err = fmt.Errorf("duplicate %s on field %q", op, field)
-		return b
-	}
-	ops[op] = value
+	b.conds = append(b.conds, mongoOp{field: field, op: op, value: value})
 	return b
 }
 
@@ -244,8 +260,19 @@ func (b *MongoBuilder) Sort(field string, direction int) *MongoBuilder {
 			return b
 		}
 	}
-	b.sort = append(b.sort, E{Key: field, Value: direction})
+	b.sort = append(b.sort, E{Key: field, Value: mongoDirection(direction)})
 	return b
+}
+
+// Boxed sort directions, so that adding a sort key does not allocate.
+var mongoAsc, mongoDesc interface{} = 1, -1
+
+// mongoDirection returns direction, which is 1 or -1, as an interface value.
+func mongoDirection(direction int) interface{} {
+	if direction == 1 {
+		return mongoAsc
+	}
+	return mongoDesc
 }
 
 // Project includes only the given fields in results.
@@ -262,15 +289,13 @@ func (b *MongoBuilder) setProjection(method string, fields []string, v int) *Mon
 	if !b.requireOp(method, "find") {
 		return b
 	}
-	if b.projection == nil {
-		b.projection = make(map[string]interface{}, len(fields))
-	}
+	b.projected = true
 	for _, f := range fields {
 		if err := validMongoField(f); err != nil {
 			b.err = err
 			return b
 		}
-		b.projection[f] = v
+		b.projection = append(b.projection, E{Key: f, Value: v})
 	}
 	return b
 }
@@ -309,19 +334,16 @@ func (b *MongoBuilder) addUpdate(method, op, field string, value interface{}) *M
 		b.err = err
 		return b
 	}
-	if prev, ok := b.updated[field]; ok {
-		b.err = fmt.Errorf("field %q is already updated by %s", field, prev)
-		return b
+	for _, u := range b.updates {
+		if u.field == field {
+			b.err = fmt.Errorf("field %q is already updated by %s", field, u.op)
+			return b
+		}
 	}
-	if b.update == nil {
-		b.update = make(map[string]map[string]interface{})
-		b.updated = make(map[string]string)
+	if b.updates == nil {
+		b.updates = make([]mongoOp, 0, 4)
 	}
-	if b.update[op] == nil {
-		b.update[op] = make(map[string]interface{})
-	}
-	b.update[op][field] = value
-	b.updated[field] = op
+	b.updates = append(b.updates, mongoOp{field: field, op: op, value: value})
 	return b
 }
 
@@ -376,7 +398,7 @@ func (b *MongoBuilder) Build() (*MongoQuery, error) {
 		return nil, b.err
 	}
 	for key := range b.raw {
-		if _, clash := b.fields[key]; clash {
+		if b.hasField(key) {
 			return nil, fmt.Errorf("Raw() key %q is also used as a field", key)
 		}
 	}
@@ -388,31 +410,54 @@ func (b *MongoBuilder) Build() (*MongoQuery, error) {
 		Upsert:     b.upsert,
 	}
 	if b.op == "update" {
-		if len(b.update) == 0 {
+		if len(b.updates) == 0 {
 			return nil, fmt.Errorf("no update operators provided for MongoUpdate")
 		}
-		q.Update = make(map[string]interface{}, len(b.update))
-		for op, fields := range b.update {
-			q.Update[op] = copyMap(fields)
+		q.Update = make(map[string]interface{}, 2)
+		for _, u := range b.updates {
+			fields, _ := q.Update[u.op].(map[string]interface{})
+			if fields == nil {
+				fields = make(map[string]interface{})
+				q.Update[u.op] = fields
+			}
+			fields[u.field] = u.value
 		}
 	}
 	if b.sort != nil {
 		q.Sort = append(D(nil), b.sort...)
 	}
-	if b.projection != nil {
-		q.Projection = copyMap(b.projection)
+	if b.projected {
+		q.Projection = make(map[string]interface{}, len(b.projection))
+		for _, e := range b.projection {
+			q.Projection[e.Key] = e.Value
+		}
 	}
 	return q, nil
 }
 
 func (b *MongoBuilder) buildFilter() map[string]interface{} {
-	f := make(map[string]interface{}, len(b.fields)+len(b.raw)+1)
-	for field, ops := range b.fields {
-		if v, ok := ops["$eq"]; ok && len(ops) == 1 && !isMongoDocument(v) {
-			f[field] = v
-		} else {
-			f[field] = copyMap(ops)
+	f := make(map[string]interface{}, len(b.conds)+len(b.raw)+1)
+	for i, c := range b.conds {
+		if _, done := f[c.field]; done {
+			continue // added with the field's first condition
 		}
+		n := 0
+		for _, d := range b.conds[i:] {
+			if d.field == c.field {
+				n++
+			}
+		}
+		if n == 1 && c.op == "$eq" && !isMongoDocument(c.value) {
+			f[c.field] = c.value
+			continue
+		}
+		ops := make(map[string]interface{}, n)
+		for _, d := range b.conds[i:] {
+			if d.field == c.field {
+				ops[d.op] = d.value
+			}
+		}
+		f[c.field] = ops
 	}
 	for k, v := range b.raw {
 		f[k] = v
@@ -441,7 +486,7 @@ func isMongoDocument(v interface{}) bool {
 		return true
 	}
 	rv := reflect.ValueOf(v)
-	for rv.Kind() == reflect.Ptr && !rv.IsNil() {
+	for rv.Kind() == reflect.Pointer && !rv.IsNil() {
 		rv = rv.Elem()
 	}
 	switch rv.Kind() {
@@ -454,8 +499,15 @@ func isMongoDocument(v interface{}) bool {
 }
 
 func toInterfaceSlice(values interface{}) ([]interface{}, error) {
-	if list, ok := values.([]interface{}); ok {
-		return append([]interface{}{}, list...), nil
+	switch x := values.(type) {
+	case []interface{}:
+		return append([]interface{}{}, x...), nil
+	case []string:
+		list := make([]interface{}, len(x))
+		for i, v := range x {
+			list[i] = v
+		}
+		return list, nil
 	}
 	rv := reflect.ValueOf(values)
 	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
@@ -518,6 +570,9 @@ func (a *MongoAggregateBuilder) Stage(name string, spec interface{}) *MongoAggre
 		a.err = fmt.Errorf("invalid pipeline stage name %q", name)
 		return a
 	}
+	if a.stages == nil {
+		a.stages = make([]mongoStage, 0, 8)
+	}
 	a.stages = append(a.stages, mongoStage{name, spec})
 	return a
 }
@@ -574,10 +629,10 @@ func (a *MongoAggregateBuilder) Sort(field string, direction int) *MongoAggregat
 	}
 	if n := len(a.stages); n > 0 && a.stages[n-1].name == "$sort" {
 		d := a.stages[n-1].spec.(D)
-		a.stages[n-1].spec = append(d[:len(d):len(d)], E{Key: field, Value: direction})
+		a.stages[n-1].spec = append(d[:len(d):len(d)], E{Key: field, Value: mongoDirection(direction)})
 		return a
 	}
-	return a.Stage("$sort", D{{Key: field, Value: direction}})
+	return a.Stage("$sort", D{{Key: field, Value: mongoDirection(direction)}})
 }
 
 // Project appends {$project: spec}.

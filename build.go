@@ -2,7 +2,7 @@ package gqbd
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 )
 
 func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
@@ -204,6 +204,6 @@ func sortedKeys(data map[string]interface{}) []string {
 	for key := range data {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys) // unlike sort.Strings, does not move keys to the heap
 	return keys
 }

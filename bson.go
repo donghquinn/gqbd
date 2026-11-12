@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,12 +143,17 @@ func appendBSONValue(dst []byte, v interface{}) ([]byte, byte, error) {
 		dst = append(dst, 0) // generic binary subtype
 		return append(dst, x...), bsonBinary, nil
 	case map[string]interface{}:
-		return appendBSONMap(dst, reflect.ValueOf(x))
+		return appendBSONStringMap(dst, x)
 	case []interface{}:
-		return appendBSONArray(dst, reflect.ValueOf(x))
+		return appendBSONList(dst, x)
 	}
 	return appendBSONReflect(dst, reflect.ValueOf(v))
 }
+
+var (
+	stringMapType = reflect.TypeOf(map[string]interface{}(nil))
+	listType      = reflect.TypeOf([]interface{}(nil))
+)
 
 // appendBSONReflect handles named types (bson.M, bson.A, bson.D, ObjectID, ...)
 // by their underlying kind.
@@ -163,7 +169,7 @@ func appendBSONReflect(dst []byte, rv reflect.Value) ([]byte, byte, error) {
 		}
 	}
 	switch rv.Kind() {
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 		if rv.IsNil() {
 			return dst, bsonNull, nil
 		}
@@ -188,6 +194,9 @@ func appendBSONReflect(dst []byte, rv reflect.Value) ([]byte, byte, error) {
 		if rv.Type().Key().Kind() != reflect.String {
 			return nil, 0, fmt.Errorf("unsupported map key type %s", rv.Type().Key())
 		}
+		if rv.Type().ConvertibleTo(stringMapType) { // e.g. bson.M
+			return appendBSONStringMap(dst, rv.Convert(stringMapType).Interface().(map[string]interface{}))
+		}
 		return appendBSONMap(dst, rv)
 	case reflect.Array:
 		if rv.Len() == 12 && rv.Type().Elem().Kind() == reflect.Uint8 {
@@ -203,6 +212,9 @@ func appendBSONReflect(dst []byte, rv reflect.Value) ([]byte, byte, error) {
 		}
 		if isKeyValueSlice(rv.Type()) {
 			return appendBSONKeyValues(dst, rv)
+		}
+		if rv.Type().ConvertibleTo(listType) { // e.g. bson.A
+			return appendBSONList(dst, rv.Convert(listType).Interface().([]interface{}))
 		}
 		return appendBSONArray(dst, rv)
 	}
@@ -244,6 +256,37 @@ func appendBSONMap(dst []byte, rv reflect.Value) ([]byte, byte, error) {
 		}
 	}
 	return closeBSONDocument(dst, start), bsonDocument, nil
+}
+
+// appendBSONStringMap is appendBSONMap without reflection.
+func appendBSONStringMap(dst []byte, m map[string]interface{}) ([]byte, byte, error) {
+	keys := make([]string, 0, 8) // stays on the stack for small maps
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	start := len(dst)
+	dst = append(dst, 0, 0, 0, 0)
+	for _, k := range keys {
+		var err error
+		if dst, err = appendBSONElement(dst, k, m[k]); err != nil {
+			return nil, 0, err
+		}
+	}
+	return closeBSONDocument(dst, start), bsonDocument, nil
+}
+
+// appendBSONList is appendBSONArray without reflection.
+func appendBSONList(dst []byte, list []interface{}) ([]byte, byte, error) {
+	start := len(dst)
+	dst = append(dst, 0, 0, 0, 0)
+	for i, v := range list {
+		var err error
+		if dst, err = appendBSONElement(dst, strconv.Itoa(i), v); err != nil {
+			return nil, 0, err
+		}
+	}
+	return closeBSONDocument(dst, start), bsonArray, nil
 }
 
 func appendBSONArray(dst []byte, rv reflect.Value) ([]byte, byte, error) {
