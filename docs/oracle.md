@@ -1,5 +1,7 @@
 # Oracle
 
+**English** | [한국어](./ko/oracle.md)
+
 [← Back to README](../README.md)
 
 Oracle (`gqbd.Oracle`) uses `:N` placeholders and double quotes for identifiers. Write conditions with `?`; gqbd numbers them `:1, :2, ...` in query order when `Build()` is called. `LIMIT`/`OFFSET` are rendered as `OFFSET :n ROWS FETCH NEXT :m ROWS ONLY`, which needs Oracle 12c or later. `RETURNING` is not supported (Oracle's `RETURNING ... INTO` needs output binds) and `Returning()` is ignored.

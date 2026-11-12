@@ -1,5 +1,7 @@
 # Prometheus
 
+**English** | [한국어](./ko/prometheus.md)
+
 [← Back to README](../README.md)
 
 Prometheus gets its own builder (the SQL builders return an error for `gqbd.Prometheus`). `PromSelector(metric)` starts from a vector selector, and each function, aggregation or operator wraps the expression built so far. `Build()` returns `(query, err)`.

@@ -1,5 +1,7 @@
 # Qdrant
 
+**English** | [한국어](./ko/qdrant.md)
+
 [← Back to README](../README.md)
 
 Qdrant gets its own builders (the SQL builders return an error for `gqbd.Qdrant`). They build requests for Qdrant's **REST API** (port 6333): `Build()` returns `(path, body, err)`, where `path` is the endpoint with the collection name percent-encoded and `body` is the JSON request body. Send it with `net/http`; gqbd imports no Qdrant client.

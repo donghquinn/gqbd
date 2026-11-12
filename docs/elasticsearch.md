@@ -1,5 +1,7 @@
 # Elasticsearch
 
+**English** | [한국어](./ko/elasticsearch.md)
+
 [← Back to README](../README.md)
 
 Elasticsearch gets its own builders (the SQL builders return an error for `gqbd.Elasticsearch`). `Build()` returns `(index, body, err)`, the same shape as the SQL builders, where `body` is the JSON request body. gqbd does **not** import the Elasticsearch client; it uses only `encoding/json`, so the body works with go-elasticsearch v7, v8 and v9 or plain HTTP.

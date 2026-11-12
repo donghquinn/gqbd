@@ -1,5 +1,7 @@
 # MySQL / MariaDB
 
+**English** | [한국어](./ko/mysql.md)
+
 [← Back to README](../README.md)
 
 MySQL and MariaDB (`gqbd.Mysql`, `gqbd.MariaDB`) use `?` placeholders and backticks for identifiers. `Returning()` is ignored for these databases.
