@@ -94,3 +94,48 @@ func TestCloneConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestCloneThenExtendOriginal covers a clone and its original sharing backing
+// arrays: the original appending into its spare capacity must not show up in a
+// clone taken earlier, and the clone appending must not show up in the original.
+func TestCloneThenExtendOriginal(t *testing.T) {
+	base := gqbd.BuildSelect(gqbd.PostgreSQL, "orders", "id").Where("tenant_id = ?", 7)
+	clone := base.Clone()
+
+	base.Where("status = ?", "open").Aggregate("COUNT", "id").GroupBy("id")
+	clone.Where("status = ?", "closed").Aggregate("SUM", "total")
+
+	tests := []struct {
+		name     string
+		qb       *gqbd.QueryBuilder
+		wantSQL  string
+		wantArgs []interface{}
+	}{
+		{
+			name:     "original",
+			qb:       base,
+			wantSQL:  `SELECT "id", COUNT("id") FROM "orders" WHERE tenant_id = $1 AND status = $2 GROUP BY "id"`,
+			wantArgs: []interface{}{7, "open"},
+		},
+		{
+			name:     "clone",
+			qb:       clone,
+			wantSQL:  `SELECT "id", SUM("total") FROM "orders" WHERE tenant_id = $1 AND status = $2`,
+			wantArgs: []interface{}{7, "closed"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, args, err := tt.qb.Build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.wantSQL {
+				t.Errorf("got  %s\nwant %s", got, tt.wantSQL)
+			}
+			if !reflect.DeepEqual(args, tt.wantArgs) {
+				t.Errorf("args = %v, want %v", args, tt.wantArgs)
+			}
+		})
+	}
+}

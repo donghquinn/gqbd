@@ -1,5 +1,7 @@
 # PostgreSQL
 
+**English** | [한국어](./ko/postgresql.md)
+
 [← Back to README](../README.md)
 
 PostgreSQL uses `$N` placeholders and double quotes for identifiers, and supports `RETURNING` on INSERT. Write conditions with `?`; gqbd numbers them `$1, $2, ...` in query order when `Build()` is called.

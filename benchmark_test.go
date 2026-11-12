@@ -54,3 +54,38 @@ func BenchmarkDeleteMySQL(b *testing.B) {
 		_, _, _ = BuildDelete(Mysql, "users").Where("id = ?", 1).Build()
 	}
 }
+
+// BenchmarkBuildOnly measures rendering alone, for a builder built once and
+// reused, such as a base query shared with Clone.
+func BenchmarkBuildOnly(b *testing.B) {
+	qb := BuildSelect(PostgreSQL, "users u", "u.id", "u.name", "p.title").
+		LeftJoin("posts p", "p.user_id = u.id").
+		Where("u.status = ?", "active").
+		Where("u.age > ?", 18).
+		OrderBy("u.created_at", "DESC", nil).
+		Limit(10)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = qb.Build()
+	}
+}
+
+func BenchmarkCloneAndBuild(b *testing.B) {
+	base := BuildSelect(PostgreSQL, "orders", "id", "total").Where("tenant_id = ?", 7)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = base.Clone().Where("status = ?", "open").Limit(20).Build()
+	}
+}
+
+func BenchmarkSelectOracle(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = BuildSelect(Oracle, "users u", "u.id", "u.name").
+			Where("u.status = ?", "active").
+			OrderBy("u.id", "ASC", nil).
+			Limit(10).
+			Offset(20).
+			Build()
+	}
+}

@@ -1,0 +1,33 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - revive
+    - staticcheck
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        - G104 # strings.Builder writes cannot fail; errcheck covers real cases
+        - G115 # the BSON encoder truncates integers on purpose; ranges are checked where it matters
+    staticcheck:
+      checks:
+        - all
+        - -ST1003 # keep existing exported names such as Mysql
+        - -ST1005 # error strings start with product names (Redis, MongoDB, ...)
+        - -QF1001 # character-class checks read better without De Morgan's law
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

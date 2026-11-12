@@ -2,6 +2,7 @@ package gqbd
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -56,31 +57,82 @@ type DBConfig struct {
 // call Clone and add to the copy. A builder is not safe for concurrent use,
 // but Build may be called from several goroutines once building is finished.
 type QueryBuilder struct {
-	op         string
 	dbType     DBType
 	d          *dialect
-	table      string
-	columns    []string
-	joins      []string
+	table      ident
+	columns    []ident
+	joins      []joinClause
 	where      []string
 	whereArgs  []interface{}
-	groupBy    []string
+	groupBy    []ident
 	having     []string
 	havingArgs []interface{}
-	orderBy    string
+	orderCol   ident // no ORDER BY while orderCol.name is empty
 	limit      int
 	offset     int
-	distinct   bool
 	err        error
 	data       map[string]interface{}
 	returning  string
+	ch         *clickhouseClauses // nil until a ClickHouse-only method is used
+	op         sqlOp
+	distinct   bool
+	orderDesc  bool
+}
 
-	// ClickHouse only
+// sqlOp is the statement a QueryBuilder renders.
+type sqlOp uint8
+
+const (
+	opNone sqlOp = iota
+	opSelect
+	opInsert
+	opUpdate
+	opDelete
+)
+
+func (o sqlOp) String() string {
+	switch o {
+	case opSelect:
+		return "SELECT"
+	case opInsert:
+		return "INSERT"
+	case opUpdate:
+		return "UPDATE"
+	case opDelete:
+		return "DELETE"
+	}
+	return ""
+}
+
+// clickhouseClauses holds the ClickHouse-only clauses. They live behind a
+// pointer so builders for other databases stay smaller.
+type clickhouseClauses struct {
 	final        bool
 	prewhere     []string
 	prewhereArgs []interface{}
 	settings     []string
 }
+
+// noClickhouseClauses is read in place of a nil QueryBuilder.ch; never modified.
+var noClickhouseClauses = &clickhouseClauses{}
+
+// clickhouse returns the ClickHouse clauses for reading.
+func (qb *QueryBuilder) clickhouse() *clickhouseClauses {
+	if qb.ch == nil {
+		return noClickhouseClauses
+	}
+	return qb.ch
+}
+
+type joinClause struct {
+	kind  string // "LEFT JOIN ", "INNER JOIN " or "RIGHT JOIN "
+	table ident
+	on    string
+}
+
+// selectAll is the column list of a SELECT without columns. Its capacity equals
+// its length, so Aggregate copies it before appending.
+var selectAll = []ident{{name: "*", verbatim: true}}
 
 // BuildSelect creates a new SELECT query builder for the specified database type.
 //
@@ -89,7 +141,7 @@ type QueryBuilder struct {
 //	qb := gqbd.BuildSelect(gqbd.PostgreSQL, "users", "id", "name")
 func BuildSelect(dbType DBType, table string, columns ...string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table, columns...)
-	qb.op = "SELECT"
+	qb.op = opSelect
 	return qb
 }
 
@@ -100,7 +152,7 @@ func BuildSelect(dbType DBType, table string, columns ...string) *QueryBuilder {
 //	qb := gqbd.BuildInsert(gqbd.PostgreSQL, "users")
 func BuildInsert(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
-	qb.op = "INSERT"
+	qb.op = opInsert
 	return qb
 }
 
@@ -111,7 +163,7 @@ func BuildInsert(dbType DBType, table string) *QueryBuilder {
 //	qb := gqbd.BuildUpdate(gqbd.PostgreSQL, "users")
 func BuildUpdate(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
-	qb.op = "UPDATE"
+	qb.op = opUpdate
 	return qb
 }
 
@@ -122,7 +174,7 @@ func BuildUpdate(dbType DBType, table string) *QueryBuilder {
 //	qb := gqbd.BuildDelete(gqbd.PostgreSQL, "users")
 func BuildDelete(dbType DBType, table string) *QueryBuilder {
 	qb := NewQueryBuilder(dbType, table)
-	qb.op = "DELETE"
+	qb.op = opDelete
 	return qb
 }
 
@@ -151,24 +203,19 @@ func NewQueryBuilder(dbType DBType, table string, columns ...string) *QueryBuild
 		qb.err = unknownDBTypeError(dbType)
 		return qb
 	}
-	safeTable, err := qb.d.escapeTable(table)
-	if err != nil {
-		qb.err = err
+	qb.table, qb.err = qb.d.parseTable(table)
+	if qb.err != nil {
 		return qb
 	}
-	qb.table = safeTable
 	if len(columns) == 0 {
-		qb.columns = []string{"*"}
+		qb.columns = selectAll
 		return qb
 	}
-	qb.columns = make([]string, len(columns))
+	qb.columns = make([]ident, len(columns))
 	for i, col := range columns {
-		safeCol, err := qb.d.escape(col)
-		if err != nil {
-			qb.err = err
+		if qb.columns[i], qb.err = qb.d.parse(col); qb.err != nil {
 			return qb
 		}
-		qb.columns[i] = safeCol
 	}
 	return qb
 }
@@ -192,12 +239,18 @@ func (qb *QueryBuilder) Aggregate(function, column string) *QueryBuilder {
 		qb.err = fmt.Errorf("invalid aggregate function %q", function)
 		return qb
 	}
-	safeCol, err := qb.d.escape(column)
+	col, err := qb.d.parse(column)
 	if err != nil {
 		qb.err = err
 		return qb
 	}
-	qb.columns = append(qb.columns, function+"("+safeCol+")")
+	var b strings.Builder
+	b.Grow(len(function) + col.size() + 2)
+	b.WriteString(function)
+	b.WriteByte('(')
+	qb.d.writeIdent(&b, col)
+	b.WriteByte(')')
+	qb.columns = append(qb.columns, ident{name: b.String(), verbatim: true})
 	return qb
 }
 
@@ -233,12 +286,12 @@ func (qb *QueryBuilder) join(kind, joinTable, onCondition string) *QueryBuilder 
 	if qb.err != nil {
 		return qb
 	}
-	safeTable, err := qb.d.escapeTable(joinTable)
+	table, err := qb.d.parseTable(joinTable)
 	if err != nil {
 		qb.err = err
 		return qb
 	}
-	qb.joins = append(qb.joins, kind+safeTable+" ON "+onCondition)
+	qb.joins = append(qb.joins, joinClause{kind: kind, table: table, on: onCondition})
 	return qb
 }
 
@@ -251,9 +304,21 @@ func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuild
 	if qb.err != nil {
 		return qb
 	}
+	qb.addWhere(condition, args)
+	return qb
+}
+
+// addWhere appends a condition, sizing the slices for a few conditions up front
+// so typical queries grow them once instead of at 1, 2 and 4 elements.
+func (qb *QueryBuilder) addWhere(condition string, args []interface{}) {
+	if qb.where == nil {
+		qb.where = make([]string, 0, 4)
+	}
+	if qb.whereArgs == nil && len(args) > 0 {
+		qb.whereArgs = make([]interface{}, 0, max(4, len(args)))
+	}
 	qb.where = append(qb.where, condition)
 	qb.whereArgs = append(qb.whereArgs, args...)
-	return qb
 }
 
 /*
@@ -267,7 +332,7 @@ func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuild
 	if qb.err != nil {
 		return qb
 	}
-	safeCol, err := qb.d.escape(column)
+	col, err := qb.d.parse(column)
 	if err != nil {
 		qb.err = err
 		return qb
@@ -277,15 +342,14 @@ func (qb *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuild
 		return qb
 	}
 	var b strings.Builder
-	b.Grow(len(safeCol) + 6 + 3*len(values))
-	b.WriteString(safeCol)
+	b.Grow(col.size() + 6 + 3*len(values))
+	qb.d.writeIdent(&b, col)
 	b.WriteString(" IN (?")
 	for i := 1; i < len(values); i++ {
 		b.WriteString(", ?")
 	}
 	b.WriteByte(')')
-	qb.where = append(qb.where, b.String())
-	qb.whereArgs = append(qb.whereArgs, values...)
+	qb.addWhere(b.String(), values)
 	return qb
 }
 
@@ -301,13 +365,16 @@ func (qb *QueryBuilder) WhereBetween(column string, start, end interface{}) *Que
 	if qb.err != nil {
 		return qb
 	}
-	safeCol, err := qb.d.escape(column)
+	col, err := qb.d.parse(column)
 	if err != nil {
 		qb.err = err
 		return qb
 	}
-	qb.where = append(qb.where, safeCol+" BETWEEN ? AND ?")
-	qb.whereArgs = append(qb.whereArgs, start, end)
+	var b strings.Builder
+	b.Grow(col.size() + 16)
+	qb.d.writeIdent(&b, col)
+	b.WriteString(" BETWEEN ? AND ?")
+	qb.addWhere(b.String(), []interface{}{start, end})
 	return qb
 }
 
@@ -348,13 +415,13 @@ func (qb *QueryBuilder) GroupBy(columns ...string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	for _, col := range columns {
-		safeCol, err := qb.d.escape(col)
+	for _, name := range columns {
+		col, err := qb.d.parse(name)
 		if err != nil {
 			qb.err = err
 			return qb
 		}
-		qb.groupBy = append(qb.groupBy, safeCol)
+		qb.groupBy = append(qb.groupBy, col)
 	}
 	return qb
 }
@@ -393,12 +460,12 @@ func (qb *QueryBuilder) OrderBy(column, direction string, allowedColumns map[str
 			column = "id"
 		}
 	}
-	safeCol, err := qb.d.escape(column)
+	col, err := qb.d.parse(column)
 	if err != nil {
 		qb.err = err
 		return qb
 	}
-	qb.orderBy = safeCol + " " + direction
+	qb.orderCol, qb.orderDesc = col, direction == "DESC"
 	return qb
 }
 
@@ -440,7 +507,7 @@ func (qb *QueryBuilder) Values(data map[string]interface{}) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	if qb.op != "INSERT" {
+	if qb.op != opInsert {
 		qb.err = fmt.Errorf("Values() can only be used with INSERT operation")
 		return qb
 	}
@@ -458,7 +525,7 @@ func (qb *QueryBuilder) Set(data map[string]interface{}) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	if qb.op != "UPDATE" {
+	if qb.op != opUpdate {
 		qb.err = fmt.Errorf("Set() can only be used with UPDATE operation")
 		return qb
 	}
@@ -476,7 +543,7 @@ func (qb *QueryBuilder) Returning(clause string) *QueryBuilder {
 	if qb.err != nil {
 		return qb
 	}
-	if qb.op != "INSERT" {
+	if qb.op != opInsert {
 		qb.err = fmt.Errorf("Returning() can only be used with INSERT operation")
 		return qb
 	}
@@ -484,7 +551,7 @@ func (qb *QueryBuilder) Returning(clause string) *QueryBuilder {
 	return qb
 }
 
-func (qb *QueryBuilder) requireClickHouse(method string, ops ...string) bool {
+func (qb *QueryBuilder) requireClickHouse(method string, ops ...sqlOp) bool {
 	if qb.err != nil {
 		return false
 	}
@@ -494,6 +561,9 @@ func (qb *QueryBuilder) requireClickHouse(method string, ops ...string) bool {
 	}
 	for _, op := range ops {
 		if qb.op == op {
+			if qb.ch == nil {
+				qb.ch = &clickhouseClauses{}
+			}
 			return true
 		}
 	}
@@ -504,8 +574,8 @@ func (qb *QueryBuilder) requireClickHouse(method string, ops ...string) bool {
 // Final adds the FINAL modifier after the table name (ClickHouse only), which
 // merges rows of ReplacingMergeTree and similar engines at query time.
 func (qb *QueryBuilder) Final() *QueryBuilder {
-	if qb.requireClickHouse("Final", "SELECT") {
-		qb.final = true
+	if qb.requireClickHouse("Final", opSelect) {
+		qb.ch.final = true
 	}
 	return qb
 }
@@ -513,9 +583,9 @@ func (qb *QueryBuilder) Final() *QueryBuilder {
 // Prewhere adds a PREWHERE condition (ClickHouse only). Conditions are ANDed and
 // bound like Where.
 func (qb *QueryBuilder) Prewhere(condition string, args ...interface{}) *QueryBuilder {
-	if qb.requireClickHouse("Prewhere", "SELECT") {
-		qb.prewhere = append(qb.prewhere, condition)
-		qb.prewhereArgs = append(qb.prewhereArgs, args...)
+	if qb.requireClickHouse("Prewhere", opSelect) {
+		qb.ch.prewhere = append(qb.ch.prewhere, condition)
+		qb.ch.prewhereArgs = append(qb.ch.prewhereArgs, args...)
 	}
 	return qb
 }
@@ -528,7 +598,7 @@ func (qb *QueryBuilder) Prewhere(condition string, args ...interface{}) *QueryBu
 //
 //	gqbd.BuildUpdate(gqbd.ClickHouse, "events").Set(data).Where("id = ?", 1).Setting("mutations_sync", 2)
 func (qb *QueryBuilder) Setting(name string, value interface{}) *QueryBuilder {
-	if !qb.requireClickHouse("Setting", "SELECT", "INSERT", "UPDATE", "DELETE") {
+	if !qb.requireClickHouse("Setting", opSelect, opInsert, opUpdate, opDelete) {
 		return qb
 	}
 	if !isPlainIdent(name) {
@@ -540,7 +610,7 @@ func (qb *QueryBuilder) Setting(name string, value interface{}) *QueryBuilder {
 		qb.err = fmt.Errorf("setting %q: %w", name, err)
 		return qb
 	}
-	qb.settings = append(qb.settings, name+" = "+lit)
+	qb.ch.settings = append(qb.ch.settings, name+" = "+lit)
 	return qb
 }
 
@@ -572,13 +642,13 @@ func (qb *QueryBuilder) Build() (string, []interface{}, error) {
 		return "", nil, qb.err
 	}
 	switch qb.op {
-	case "SELECT":
+	case opSelect:
 		return qb.buildSelect()
-	case "INSERT":
+	case opInsert:
 		return qb.buildInsert()
-	case "UPDATE":
+	case opUpdate:
 		return qb.buildUpdate()
-	case "DELETE":
+	case opDelete:
 		return qb.buildDelete()
 	default:
 		return "", nil, fmt.Errorf("unsupported operation: %s", qb.op)
@@ -613,18 +683,32 @@ func unknownDBTypeError(dbType DBType) error {
 // The Values/Set map is shared with the original, not copied; Values and Set
 // replace it rather than modify it.
 func (qb *QueryBuilder) Clone() *QueryBuilder {
+	// Builders only ever append to their slices, so the copy can share the
+	// backing arrays: clipping them to their length makes the first append on
+	// either side copy instead of writing into the other's elements.
 	c := *qb
-	c.columns = append([]string(nil), qb.columns...)
-	c.joins = append([]string(nil), qb.joins...)
-	c.where = append([]string(nil), qb.where...)
-	c.whereArgs = append([]interface{}(nil), qb.whereArgs...)
-	c.groupBy = append([]string(nil), qb.groupBy...)
-	c.having = append([]string(nil), qb.having...)
-	c.havingArgs = append([]interface{}(nil), qb.havingArgs...)
-	c.prewhere = append([]string(nil), qb.prewhere...)
-	c.prewhereArgs = append([]interface{}(nil), qb.prewhereArgs...)
-	c.settings = append([]string(nil), qb.settings...)
+	c.columns = slices.Clip(qb.columns)
+	c.joins = slices.Clip(qb.joins)
+	c.where = slices.Clip(qb.where)
+	c.whereArgs = slices.Clip(qb.whereArgs)
+	c.groupBy = slices.Clip(qb.groupBy)
+	c.having = slices.Clip(qb.having)
+	c.havingArgs = slices.Clip(qb.havingArgs)
+	c.ch = qb.ch.clone()
 	return &c
+}
+
+// clone copies ch the way Clone copies a builder; a nil ch stays nil.
+func (ch *clickhouseClauses) clone() *clickhouseClauses {
+	if ch == nil {
+		return nil
+	}
+	return &clickhouseClauses{
+		final:        ch.final,
+		prewhere:     slices.Clip(ch.prewhere),
+		prewhereArgs: slices.Clip(ch.prewhereArgs),
+		settings:     slices.Clip(ch.settings),
+	}
 }
 
 /*

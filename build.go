@@ -2,48 +2,60 @@ package gqbd
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 )
 
 func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
-	w := newSQLWriter(qb.d, 32+len(qb.table)+len(qb.orderBy)+
-		totalLen(qb.columns)+totalLen(qb.joins)+totalLen(qb.where)+totalLen(qb.groupBy)+totalLen(qb.having)+
-		totalLen(qb.prewhere)+totalLen(qb.settings))
+	ch := qb.clickhouse()
+	size := 48 + qb.table.size() + qb.orderCol.size() + identsLen(qb.columns) + identsLen(qb.groupBy) +
+		totalLen(qb.where) + totalLen(qb.having) + totalLen(ch.prewhere) + totalLen(ch.settings)
+	for _, j := range qb.joins {
+		size += len(j.kind) + j.table.size() + len(j.on) + 5
+	}
+	w := newSQLWriter(qb.d, size)
 
 	w.WriteString("SELECT ")
 	if qb.distinct {
 		w.WriteString("DISTINCT ")
 	}
-	w.list(qb.columns, ", ")
+	w.idents(qb.columns, ", ")
 	w.WriteString(" FROM ")
-	w.WriteString(qb.table)
-	if qb.final {
+	w.ident(qb.table)
+	if ch.final {
 		w.WriteString(" FINAL")
 	}
-	if len(qb.joins) > 0 {
+	for _, j := range qb.joins {
 		w.WriteByte(' ')
-		w.list(qb.joins, " ")
+		w.WriteString(j.kind)
+		w.ident(j.table)
+		w.WriteString(" ON ")
+		w.WriteString(j.on)
 	}
-	if len(qb.prewhere) > 0 {
+	if len(ch.prewhere) > 0 {
 		w.WriteString(" PREWHERE ")
-		w.condList(qb.prewhere, " AND ")
+		w.condList(ch.prewhere, " AND ")
 	}
 	qb.writeWhere(w)
 	if len(qb.groupBy) > 0 {
 		w.WriteString(" GROUP BY ")
-		w.list(qb.groupBy, ", ")
+		w.idents(qb.groupBy, ", ")
 	}
 	if len(qb.having) > 0 {
 		w.WriteString(" HAVING ")
 		w.condList(qb.having, " AND ")
 	}
-	if qb.orderBy != "" {
+	if qb.orderCol.name != "" {
 		w.WriteString(" ORDER BY ")
-		w.WriteString(qb.orderBy)
+		w.ident(qb.orderCol)
+		if qb.orderDesc {
+			w.WriteString(" DESC")
+		} else {
+			w.WriteString(" ASC")
+		}
 	}
 
-	args := make([]interface{}, 0, len(qb.prewhereArgs)+len(qb.whereArgs)+len(qb.havingArgs)+2)
-	args = append(args, qb.prewhereArgs...)
+	args := make([]interface{}, 0, len(ch.prewhereArgs)+len(qb.whereArgs)+len(qb.havingArgs)+2)
+	args = append(args, ch.prewhereArgs...)
 	args = append(args, qb.whereArgs...)
 	args = append(args, qb.havingArgs...)
 	args = qb.writeLimit(w, args)
@@ -56,21 +68,21 @@ func (qb *QueryBuilder) buildInsert() (string, []interface{}, error) {
 		return "", nil, fmt.Errorf("no data provided for INSERT")
 	}
 	keys := sortedKeys(qb.data)
-	w := newSQLWriter(qb.d, 32+len(qb.table)+len(qb.returning)+totalLen(keys)+8*len(keys))
+	w := newSQLWriter(qb.d, 32+qb.table.size()+len(qb.returning)+totalLen(keys)+8*len(keys)+totalLen(qb.clickhouse().settings))
 	args := make([]interface{}, len(keys))
 
 	w.WriteString("INSERT INTO ")
-	w.WriteString(qb.table)
+	w.ident(qb.table)
 	w.WriteString(" (")
 	for i, key := range keys {
-		safeCol, err := qb.d.escape(key)
+		col, err := qb.d.parse(key)
 		if err != nil {
 			return "", nil, err
 		}
 		if i > 0 {
 			w.WriteString(", ")
 		}
-		w.WriteString(safeCol)
+		w.ident(col)
 		args[i] = qb.data[key]
 	}
 	w.WriteByte(')')
@@ -93,27 +105,27 @@ func (qb *QueryBuilder) buildUpdate() (string, []interface{}, error) {
 		return "", nil, err
 	}
 	keys := sortedKeys(qb.data)
-	w := newSQLWriter(qb.d, 32+len(qb.table)+totalLen(keys)+10*len(keys)+totalLen(qb.where)+totalLen(qb.settings))
+	w := newSQLWriter(qb.d, 32+qb.table.size()+totalLen(keys)+10*len(keys)+totalLen(qb.where)+totalLen(qb.clickhouse().settings))
 	args := make([]interface{}, len(keys), len(keys)+len(qb.whereArgs))
 
 	if qb.d.alterUpdate {
 		w.WriteString("ALTER TABLE ")
-		w.WriteString(qb.table)
+		w.ident(qb.table)
 		w.WriteString(" UPDATE ")
 	} else {
 		w.WriteString("UPDATE ")
-		w.WriteString(qb.table)
+		w.ident(qb.table)
 		w.WriteString(" SET ")
 	}
 	for i, key := range keys {
-		safeCol, err := qb.d.escape(key)
+		col, err := qb.d.parse(key)
 		if err != nil {
 			return "", nil, err
 		}
 		if i > 0 {
 			w.WriteString(", ")
 		}
-		w.WriteString(safeCol)
+		w.ident(col)
 		w.WriteString(" = ")
 		w.placeholder()
 		args[i] = qb.data[key]
@@ -127,9 +139,9 @@ func (qb *QueryBuilder) buildDelete() (string, []interface{}, error) {
 	if err := qb.checkRequiredWhere("DELETE"); err != nil {
 		return "", nil, err
 	}
-	w := newSQLWriter(qb.d, 20+len(qb.table)+totalLen(qb.where)+totalLen(qb.settings))
+	w := newSQLWriter(qb.d, 20+qb.table.size()+totalLen(qb.where)+totalLen(qb.clickhouse().settings))
 	w.WriteString("DELETE FROM ")
-	w.WriteString(qb.table)
+	w.ident(qb.table)
 	qb.writeWhere(w)
 	qb.writeSettings(w)
 	return w.String(), append([]interface{}(nil), qb.whereArgs...), nil
@@ -174,9 +186,9 @@ func (qb *QueryBuilder) checkRequiredWhere(op string) error {
 }
 
 func (qb *QueryBuilder) writeSettings(w *sqlWriter) {
-	if len(qb.settings) > 0 {
+	if settings := qb.clickhouse().settings; len(settings) > 0 {
 		w.WriteString(" SETTINGS ")
-		w.list(qb.settings, ", ")
+		w.list(settings, ", ")
 	}
 }
 
@@ -192,6 +204,6 @@ func sortedKeys(data map[string]interface{}) []string {
 	for key := range data {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys) // unlike sort.Strings, does not move keys to the heap
 	return keys
 }

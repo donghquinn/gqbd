@@ -1,5 +1,7 @@
 # SQLite
 
+**English** | [한국어](./ko/sqlite.md)
+
 [← Back to README](../README.md)
 
 SQLite uses `?` placeholders and double quotes for identifiers, and supports `RETURNING` on INSERT (SQLite 3.35.0+).

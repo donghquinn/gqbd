@@ -1,5 +1,7 @@
 # MongoDB
 
+**English** | [한국어](./ko/mongodb.md)
+
 [← Back to README](../README.md)
 
 MongoDB gets its own builders (the SQL builders return an error for `gqbd.MongoDB`). gqbd does **not** import the MongoDB driver: filters, updates and pipeline stages are plain `map[string]interface{}` values, which the driver encodes itself. Sorts need key order, so they use `gqbd.D`, which mirrors `bson.D` and implements the driver's `bson.Marshaler` interface. It works with mongo-go-driver v1 and v2.

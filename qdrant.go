@@ -1,8 +1,8 @@
 package gqbd
 
 import (
-	"encoding/json"
 	"fmt"
+	"strconv"
 )
 
 // QdrantBuilder builds request bodies for Qdrant's REST API: the query API
@@ -61,7 +61,8 @@ func newQdrantBuilder(op, collection string) *QdrantBuilder {
 	return b
 }
 
-func (b *QdrantBuilder) addCondition(key string, cond map[string]interface{}) *QdrantBuilder {
+// addMatch adds {"key": key, "match": {kind: value}}.
+func (b *QdrantBuilder) addMatch(key, kind string, value interface{}) *QdrantBuilder {
 	if b.err != nil {
 		return b
 	}
@@ -69,9 +70,15 @@ func (b *QdrantBuilder) addCondition(key string, cond map[string]interface{}) *Q
 		b.err = fmt.Errorf("empty Qdrant payload key")
 		return b
 	}
-	cond["key"] = key
-	b.must = append(b.must, cond)
+	b.must = append(b.must, qdrantMatch{key: key, kind: kind, value: value})
 	return b
+}
+
+// qdrantMatch is a match condition, kept unbuilt so that Build can encode it
+// without creating its maps.
+type qdrantMatch struct {
+	key, kind string
+	value     interface{}
 }
 
 // isQdrantMatchValue reports whether v is a type Qdrant can match exactly:
@@ -91,7 +98,7 @@ func (b *QdrantBuilder) Match(key string, value interface{}) *QdrantBuilder {
 		b.err = fmt.Errorf("match on key %q: value must be a string, integer or bool, got %T", key, value)
 		return b
 	}
-	return b.addCondition(key, map[string]interface{}{"match": map[string]interface{}{"value": value}})
+	return b.addMatch(key, "value", value)
 }
 
 // MatchAny matches points whose key equals any of values (Qdrant's IN).
@@ -123,12 +130,12 @@ func (b *QdrantBuilder) matchList(method, kind, key string, values interface{}) 
 			return b
 		}
 	}
-	return b.addCondition(key, map[string]interface{}{"match": map[string]interface{}{kind: list}})
+	return b.addMatch(key, kind, list)
 }
 
 // MatchText adds a full-text match, which needs a full-text index on key.
 func (b *QdrantBuilder) MatchText(key, text string) *QdrantBuilder {
-	return b.addCondition(key, map[string]interface{}{"match": map[string]interface{}{"text": text}})
+	return b.addMatch(key, "text", text)
 }
 
 // IsEmpty matches points where key is missing, null or an empty array.
@@ -421,8 +428,11 @@ func (b *QdrantBuilder) filter() map[string]interface{} {
 	if len(b.must) > 0 {
 		must := make([]interface{}, len(b.must))
 		for i, c := range b.must {
-			if key, ok := c.(qdrantRange); ok {
-				c = map[string]interface{}{"key": string(key), "range": copyMap(b.ranges[string(key)])}
+			switch x := c.(type) {
+			case qdrantRange:
+				c = map[string]interface{}{"key": string(x), "range": copyMap(b.ranges[string(x)])}
+			case qdrantMatch:
+				c = map[string]interface{}{"key": x.key, "match": map[string]interface{}{x.kind: x.value}}
 			}
 			must[i] = c
 		}
@@ -447,37 +457,96 @@ func (b *QdrantBuilder) Build() (string, []byte, error) {
 	if b.op == "delete" && !b.hasFilter() {
 		return "", nil, fmt.Errorf("QdrantDelete requires a filter condition")
 	}
-	body := make(map[string]interface{}, 8)
+	// The body is written directly, with keys in the sorted order json.Marshal
+	// uses for maps, so it is byte-for-byte what marshaling a map would give.
+	data := append(make([]byte, 0, 512), '{')
+	var err error
 	if b.hasFilter() {
-		body["filter"] = b.filter()
-	}
-	if b.query != nil {
-		body["query"] = b.query
-	}
-	if b.using != "" {
-		body["using"] = b.using
+		data = appendJSONKey(data, "filter")
+		if data, err = b.appendFilter(data); err != nil {
+			return "", nil, fmt.Errorf("encoding Qdrant request: %w", err)
+		}
 	}
 	if b.limit > 0 {
-		body["limit"] = b.limit
+		data = appendJSONKey(data, "limit")
+		data = strconv.AppendInt(data, int64(b.limit), 10)
 	}
 	if b.offset > 0 {
-		body["offset"] = b.offset
-	}
-	if b.payload != nil {
-		body["with_payload"] = b.payload
-	}
-	if b.withVector {
-		body["with_vector"] = true
-	}
-	if b.threshold != nil {
-		body["score_threshold"] = *b.threshold
+		data = appendJSONKey(data, "offset")
+		data = strconv.AppendInt(data, int64(b.offset), 10)
 	}
 	if b.exact {
-		body["params"] = map[string]interface{}{"exact": true}
+		data = appendJSONKey(data, "params")
+		data = append(data, `{"exact":true}`...)
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return "", nil, fmt.Errorf("encoding Qdrant request: %w", err)
+	if b.query != nil {
+		data = appendJSONKey(data, "query")
+		if data, err = appendJSON(data, b.query); err != nil {
+			return "", nil, fmt.Errorf("encoding Qdrant request: %w", err)
+		}
 	}
-	return "/collections/" + percentEncode(b.collection) + "/points/" + b.op, data, nil
+	if b.threshold != nil {
+		data = appendJSONKey(data, "score_threshold")
+		if data, err = appendJSON(data, *b.threshold); err != nil {
+			return "", nil, fmt.Errorf("encoding Qdrant request: %w", err)
+		}
+	}
+	if b.using != "" {
+		data = appendJSONKey(data, "using")
+		data = appendJSONString(data, b.using)
+	}
+	if b.payload != nil {
+		data = appendJSONKey(data, "with_payload")
+		if data, err = appendJSON(data, b.payload); err != nil {
+			return "", nil, fmt.Errorf("encoding Qdrant request: %w", err)
+		}
+	}
+	if b.withVector {
+		data = appendJSONKey(data, "with_vector")
+		data = append(data, "true"...)
+	}
+	return "/collections/" + percentEncode(b.collection) + "/points/" + b.op, append(data, '}'), nil
+}
+
+// appendFilter appends the JSON encoding of filter() without building its maps.
+func (b *QdrantBuilder) appendFilter(dst []byte) ([]byte, error) {
+	dst = append(dst, '{')
+	var err error
+	if len(b.must) > 0 {
+		dst = appendJSONKey(dst, "must")
+		dst = append(dst, '[')
+		for i, c := range b.must {
+			if i > 0 {
+				dst = append(dst, ',')
+			}
+			switch x := c.(type) {
+			case qdrantRange:
+				dst = append(dst, `{"key":`...)
+				dst = appendJSONString(dst, string(x))
+				dst = append(dst, `,"range":`...)
+				dst, err = appendJSON(dst, b.ranges[string(x)])
+				dst = append(dst, '}')
+			case qdrantMatch:
+				dst = append(dst, `{"key":`...)
+				dst = appendJSONString(dst, x.key)
+				dst = append(dst, `,"match":{`...)
+				dst = appendJSONKey(dst, x.kind)
+				dst, err = appendJSON(dst, x.value)
+				dst = append(dst, "}}"...)
+			default:
+				dst, err = appendJSON(dst, c)
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		dst = append(dst, ']')
+	}
+	if len(b.mustNot) > 0 {
+		dst = appendJSONKey(dst, "must_not")
+		if dst, err = appendJSON(dst, b.mustNot); err != nil {
+			return nil, err
+		}
+	}
+	return append(dst, '}'), nil
 }

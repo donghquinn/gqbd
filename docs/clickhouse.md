@@ -1,5 +1,7 @@
 # ClickHouse
 
+**English** | [한국어](./ko/clickhouse.md)
+
 [← Back to README](../README.md)
 
 ClickHouse (`gqbd.ClickHouse`) uses `?` placeholders and backticks for identifiers. Backslashes in identifiers are escaped as well as backticks, because ClickHouse treats `\` as an escape character inside quoted names. `RETURNING` is not supported and `Returning()` is ignored.

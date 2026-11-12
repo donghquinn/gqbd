@@ -1,5 +1,7 @@
 # SQL Builder
 
+**English** | [한국어](./ko/sql.md)
+
 [← Back to README](../README.md)
 
 `BuildSelect`, `BuildInsert`, `BuildUpdate` and `BuildDelete` work the same way for every SQL database; only the placeholder and identifier quoting style differ (see [PostgreSQL](postgresql.md), [MySQL / MariaDB](mysql.md), [SQLite](sqlite.md), [ClickHouse](clickhouse.md), [Oracle](oracle.md)). The examples below show PostgreSQL output.

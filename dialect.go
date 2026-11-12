@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // dialect captures everything that differs between the supported SQL databases.
@@ -48,90 +50,167 @@ func dialectFor(dbType DBType) *dialect {
 	}
 }
 
-// quoteName wraps a single identifier in the dialect's quote character, doubling
-// any embedded quote characters (and escaping backslashes where they are escape
-// characters) so the identifier cannot break out of its quotes.
-func (d *dialect) quoteName(name string) string {
-	if d.quote == 0 {
-		return name
-	}
-	q := string(d.quote)
-	if d.backslashEscape && strings.IndexByte(name, '\\') >= 0 {
-		name = strings.ReplaceAll(name, `\`, `\\`)
-	}
-	if strings.IndexByte(name, d.quote) >= 0 {
-		name = strings.ReplaceAll(name, q, q+q)
-	}
-	return q + name + q
+// ident is a parsed identifier: [prefix.]name[sep alias]. Builders keep idents
+// and write them straight into the query at Build time, so escaping a column or
+// table does not allocate.
+type ident struct {
+	prefix   string // unquoted qualifier, such as a table alias or schema
+	name     string
+	alias    string
+	as       bool // the alias is introduced with AS
+	verbatim bool // name is written unchanged: "*" or a function call
 }
 
-// escape quotes an identifier, understanding "*", function calls, "table alias",
-// "table AS alias" and "prefix.name" forms.
-func (d *dialect) escape(name string) (string, error) {
+// parse validates an identifier, understanding "*", function calls,
+// "table alias", "table AS alias" and "prefix.name" forms.
+func (d *dialect) parse(name string) (ident, error) {
 	if name == "*" {
-		return name, nil
+		return ident{name: name, verbatim: true}, nil
 	}
 	if name == "" {
-		return "", fmt.Errorf("empty identifier not allowed")
+		return ident{}, fmt.Errorf("empty identifier not allowed")
 	}
 
 	// Function calls (e.g. "COUNT(id)") are passed through unescaped.
 	if strings.IndexByte(name, '(') >= 0 && strings.IndexByte(name, ')') >= 0 {
-		return name, nil
+		return ident{name: name, verbatim: true}, nil
 	}
 
 	if strings.IndexByte(name, ' ') >= 0 {
-		parts := strings.Fields(name)
-		switch {
-		case len(parts) == 3 && strings.EqualFold(parts[1], "AS"):
-			return d.escapeAliased(parts[0], " AS ", parts[2])
-		case len(parts) == 2:
-			return d.escapeAliased(parts[0], " ", parts[1])
+		switch parts, n := fields3(name); {
+		case n == 3 && strings.EqualFold(parts[1], "AS"):
+			return parseAliased(parts[0], true, parts[2])
+		case n == 2:
+			return parseAliased(parts[0], false, parts[1])
 		}
 	}
 
-	return d.escapeQualified(name)
+	return parseQualified(name)
 }
 
-// escapeTable is escape for table names, dropping AS before the alias in
+// parseTable is parse for table names, dropping AS before the alias in
 // dialects that do not accept it there.
-func (d *dialect) escapeTable(name string) (string, error) {
-	if d.noTableAS && strings.IndexByte(name, ' ') >= 0 {
-		if parts := strings.Fields(name); len(parts) == 3 && strings.EqualFold(parts[1], "AS") {
-			return d.escapeAliased(parts[0], " ", parts[2])
-		}
+func (d *dialect) parseTable(name string) (ident, error) {
+	id, err := d.parse(name)
+	if d.noTableAS {
+		id.as = false
 	}
-	return d.escape(name)
+	return id, err
 }
 
-func (d *dialect) escapeAliased(name, sep, alias string) (string, error) {
+func parseAliased(name string, as bool, alias string) (ident, error) {
 	if !isPlainIdent(alias) {
-		return "", fmt.Errorf("invalid alias %q", alias)
+		return ident{}, fmt.Errorf("invalid alias %q", alias)
 	}
-	escaped, err := d.escapeQualified(name)
+	id, err := parseQualified(name)
 	if err != nil {
-		return "", err
+		return ident{}, err
 	}
-	return escaped + sep + alias, nil
+	id.as, id.alias = as, alias
+	return id, nil
 }
 
-// escapeQualified quotes the last segment of a dotted name ("t.column" or
-// "schema.table"), leaving the prefix unquoted so it can refer to an alias.
-func (d *dialect) escapeQualified(name string) (string, error) {
+// parseQualified splits off the prefix of a dotted name ("t.column" or
+// "schema.table"); only the last segment is quoted, so the prefix can refer to
+// an alias.
+func parseQualified(name string) (ident, error) {
 	dot := strings.LastIndexByte(name, '.')
 	if dot < 0 {
-		return d.quoteName(name), nil
+		return ident{name: name}, nil
 	}
 	prefix, last := name[:dot], name[dot+1:]
 	if last == "" {
-		return "", fmt.Errorf("invalid identifier %q", name)
+		return ident{}, fmt.Errorf("invalid identifier %q", name)
 	}
-	for _, p := range strings.Split(prefix, ".") {
-		if !isPlainIdent(p) {
-			return "", fmt.Errorf("invalid identifier prefix %q", prefix)
+	for rest := prefix; ; {
+		seg, tail, more := strings.Cut(rest, ".")
+		if !isPlainIdent(seg) {
+			return ident{}, fmt.Errorf("invalid identifier prefix %q", prefix)
 		}
+		if !more {
+			break
+		}
+		rest = tail
 	}
-	return prefix + "." + d.quoteName(last), nil
+	return ident{prefix: prefix, name: last}, nil
+}
+
+// fields3 splits s around white space like strings.Fields without allocating.
+// It returns the first three fields and the field count, capped at 4.
+func fields3(s string) (f [3]string, n int) {
+	for i := 0; i < len(s) && n < 4; {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if unicode.IsSpace(r) {
+			i += size
+			continue
+		}
+		start := i
+		for i < len(s) {
+			r, size = utf8.DecodeRuneInString(s[i:])
+			if unicode.IsSpace(r) {
+				break
+			}
+			i += size
+		}
+		if n < len(f) {
+			f[n] = s[start:i] // #nosec G602 -- 0 <= start <= i <= len(s) by construction
+		}
+		n++
+	}
+	return f, n
+}
+
+// size is an estimate of the escaped length of id, for sizing buffers.
+func (id ident) size() int {
+	return len(id.prefix) + len(id.name) + len(id.alias) + 7
+}
+
+// writeIdent writes id, wrapping its name in the dialect's quote character.
+// Embedded quote characters are doubled (and backslashes too where they are
+// escape characters) so the name cannot break out of its quotes.
+func (d *dialect) writeIdent(b *strings.Builder, id ident) {
+	if id.prefix != "" {
+		b.WriteString(id.prefix)
+		b.WriteByte('.')
+	}
+	if id.verbatim || d.quote == 0 {
+		b.WriteString(id.name)
+	} else {
+		b.WriteByte(d.quote)
+		start := 0
+		for i := 0; i < len(id.name); i++ {
+			if c := id.name[i]; c == d.quote || c == '\\' && d.backslashEscape {
+				b.WriteString(id.name[start : i+1])
+				b.WriteByte(c)
+				start = i + 1
+			}
+		}
+		b.WriteString(id.name[start:])
+		b.WriteByte(d.quote)
+	}
+	if id.alias != "" {
+		if id.as {
+			b.WriteString(" AS ")
+		} else {
+			b.WriteByte(' ')
+		}
+		b.WriteString(id.alias)
+	}
+}
+
+// escape returns the escaped form of an identifier as a string.
+func (d *dialect) escape(name string) (string, error) {
+	id, err := d.parse(name)
+	if err != nil {
+		return "", err
+	}
+	if id.verbatim {
+		return id.name, nil
+	}
+	var b strings.Builder
+	b.Grow(id.size())
+	d.writeIdent(&b, id)
+	return b.String(), nil
 }
 
 // isPlainIdent reports whether s consists only of ASCII letters, digits and underscores.
@@ -160,6 +239,19 @@ func newSQLWriter(d *dialect, size int) *sqlWriter {
 	w := &sqlWriter{d: d}
 	w.Grow(size)
 	return w
+}
+
+func (w *sqlWriter) ident(id ident) {
+	w.d.writeIdent(&w.Builder, id)
+}
+
+func (w *sqlWriter) idents(ids []ident, sep string) {
+	for i, id := range ids {
+		if i > 0 {
+			w.WriteString(sep)
+		}
+		w.ident(id)
+	}
 }
 
 func (w *sqlWriter) placeholder() {
@@ -235,6 +327,14 @@ func totalLen(items []string) int {
 	n := 0
 	for _, s := range items {
 		n += len(s) + 2
+	}
+	return n
+}
+
+func identsLen(ids []ident) int {
+	n := 0
+	for _, id := range ids {
+		n += id.size() + 2
 	}
 	return n
 }

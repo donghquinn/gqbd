@@ -3,7 +3,11 @@ package gqbd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ESBuilder builds Elasticsearch query DSL request bodies for the search, count
@@ -25,7 +29,7 @@ type ESBuilder struct {
 	index   string
 	clauses []esClause
 	ranges  map[string]map[string]interface{} // field -> gt/gte/lt/lte
-	sort    []interface{}
+	sort    []esSort
 	source  []string
 	size    int // -1 when unset, because size 0 (aggregations only) is meaningful
 	from    int
@@ -33,10 +37,19 @@ type ESBuilder struct {
 	err     error
 }
 
+// esClause is one query of the bool query. The common leaf queries are kept as
+// kind, field and value and rendered when needed, which avoids building their
+// nested maps; any other query is kept as a ready-made query map.
 type esClause struct {
-	occur      string // must, filter or must_not
-	query      map[string]interface{}
-	rangeField string // set instead of query for range clauses, which are built from ranges
+	occur string // must, filter or must_not
+	kind  string // match, match_phrase, term, terms, prefix, exists or range; empty when query is set
+	field string
+	value interface{}
+	query map[string]interface{}
+}
+
+type esSort struct {
+	field, order string
 }
 
 // ESSearch creates a builder for the search API. index may name several
@@ -65,26 +78,26 @@ func newESBuilder(op, index string) *ESBuilder {
 	return b
 }
 
-func (b *ESBuilder) add(occur, field string, query map[string]interface{}) *ESBuilder {
+func (b *ESBuilder) add(c esClause) *ESBuilder {
 	if b.err != nil {
 		return b
 	}
-	if field == "" {
+	if c.field == "" {
 		b.err = fmt.Errorf("empty Elasticsearch field name")
 		return b
 	}
-	b.clauses = append(b.clauses, esClause{occur: occur, query: query})
+	b.clauses = append(b.clauses, c)
 	return b
 }
 
 // Match adds a full-text {"match": {field: text}} query.
 func (b *ESBuilder) Match(field, text string) *ESBuilder {
-	return b.add("must", field, map[string]interface{}{"match": map[string]interface{}{field: text}})
+	return b.add(esClause{occur: "must", kind: "match", field: field, value: text})
 }
 
 // MatchPhrase adds a {"match_phrase": {field: text}} query.
 func (b *ESBuilder) MatchPhrase(field, text string) *ESBuilder {
-	return b.add("must", field, map[string]interface{}{"match_phrase": map[string]interface{}{field: text}})
+	return b.add(esClause{occur: "must", kind: "match_phrase", field: field, value: text})
 }
 
 // MultiMatch adds a {"multi_match": {"query": text, "fields": fields}} query.
@@ -103,17 +116,15 @@ func (b *ESBuilder) MultiMatch(text string, fields ...string) *ESBuilder {
 			return b
 		}
 	}
-	return b.add("must", fields[0], map[string]interface{}{
+	return b.add(esClause{occur: "must", field: fields[0], query: map[string]interface{}{
 		"multi_match": map[string]interface{}{"query": text, "fields": append([]string(nil), fields...)},
-	})
+	}})
 }
 
 // Term adds an exact {"term": {field: {"value": value}}} filter. The long form
 // keeps an object value from being read as term options.
 func (b *ESBuilder) Term(field string, value interface{}) *ESBuilder {
-	return b.add("filter", field, map[string]interface{}{
-		"term": map[string]interface{}{field: map[string]interface{}{"value": value}},
-	})
+	return b.add(esClause{occur: "filter", kind: "term", field: field, value: value})
 }
 
 // Terms adds a {"terms": {field: values}} filter. values must be a non-empty
@@ -131,19 +142,17 @@ func (b *ESBuilder) Terms(field string, values interface{}) *ESBuilder {
 		b.err = fmt.Errorf("Terms() requires at least one value")
 		return b
 	}
-	return b.add("filter", field, map[string]interface{}{"terms": map[string]interface{}{field: list}})
+	return b.add(esClause{occur: "filter", kind: "terms", field: field, value: list})
 }
 
 // Exists adds an {"exists": {"field": field}} filter.
 func (b *ESBuilder) Exists(field string) *ESBuilder {
-	return b.add("filter", field, map[string]interface{}{"exists": map[string]interface{}{"field": field}})
+	return b.add(esClause{occur: "filter", kind: "exists", field: field})
 }
 
 // Prefix adds a {"prefix": {field: {"value": prefix}}} filter.
 func (b *ESBuilder) Prefix(field, prefix string) *ESBuilder {
-	return b.add("filter", field, map[string]interface{}{
-		"prefix": map[string]interface{}{field: map[string]interface{}{"value": prefix}},
-	})
+	return b.add(esClause{occur: "filter", kind: "prefix", field: field, value: prefix})
 }
 
 // Gt adds field > value to the field's range filter.
@@ -183,7 +192,7 @@ func (b *ESBuilder) addRange(field, op string, value interface{}) *ESBuilder {
 		}
 		ops = make(map[string]interface{}, 2)
 		b.ranges[field] = ops
-		b.clauses = append(b.clauses, esClause{occur: "filter", rangeField: field})
+		b.clauses = append(b.clauses, esClause{occur: "filter", kind: "range", field: field})
 	}
 	if _, dup := ops[op]; dup {
 		b.err = fmt.Errorf("duplicate %s on field %q", op, field)
@@ -306,7 +315,7 @@ func (b *ESBuilder) Sort(field, order string) *ESBuilder {
 		b.err = fmt.Errorf("sort order for %q must be asc or desc, got %q", field, order)
 		return b
 	}
-	b.sort = append(b.sort, map[string]interface{}{field: map[string]interface{}{"order": order}})
+	b.sort = append(b.sort, esSort{field, order})
 	return b
 }
 
@@ -376,30 +385,50 @@ func (b *ESBuilder) Build() (string, []byte, error) {
 	if b.op == "delete_by_query" && len(b.clauses) == 0 {
 		return "", nil, fmt.Errorf("ESDeleteByQuery requires a query; use MatchAll() to delete every document")
 	}
-	body := make(map[string]interface{}, 6)
-	if len(b.clauses) > 0 {
-		body["query"] = b.queryDSL()
-	}
-	if len(b.sort) > 0 {
-		body["sort"] = b.sort
-	}
+	// The body is written directly, with keys in the sorted order json.Marshal
+	// uses for maps, so it is byte-for-byte what marshaling a map would give.
+	data := append(make([]byte, 0, 512), '{')
+	var err error
 	if b.source != nil {
-		body["_source"] = b.source
-	}
-	if b.size >= 0 {
-		body["size"] = b.size
-	}
-	if b.from > 0 {
-		body["from"] = b.from
+		data = appendJSONKey(data, "_source")
+		data = appendJSONStrings(data, b.source)
 	}
 	if len(b.aggs) > 0 {
-		body["aggs"] = b.aggs
+		data = appendJSONKey(data, "aggs")
+		if data, err = appendJSON(data, b.aggs); err != nil {
+			return "", nil, fmt.Errorf("encoding Elasticsearch query: %w", err)
+		}
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return "", nil, fmt.Errorf("encoding Elasticsearch query: %w", err)
+	if b.from > 0 {
+		data = appendJSONKey(data, "from")
+		data = strconv.AppendInt(data, int64(b.from), 10)
 	}
-	return b.index, data, nil
+	if len(b.clauses) > 0 {
+		data = appendJSONKey(data, "query")
+		if data, err = b.appendQueryDSL(data); err != nil {
+			return "", nil, fmt.Errorf("encoding Elasticsearch query: %w", err)
+		}
+	}
+	if b.size >= 0 {
+		data = appendJSONKey(data, "size")
+		data = strconv.AppendInt(data, int64(b.size), 10)
+	}
+	if len(b.sort) > 0 {
+		data = appendJSONKey(data, "sort")
+		data = append(data, '[')
+		for i, st := range b.sort {
+			if i > 0 {
+				data = append(data, ',')
+			}
+			data = append(data, '{')
+			data = appendJSONKey(data, st.field)
+			data = append(data, `{"order":`...)
+			data = appendJSONString(data, st.order)
+			data = append(data, "}}"...)
+		}
+		data = append(data, ']')
+	}
+	return b.index, append(data, '}'), nil
 }
 
 // queryDSL returns the bool query for the builder's clauses, or match_all when
@@ -410,12 +439,283 @@ func (b *ESBuilder) queryDSL() map[string]interface{} {
 	}
 	boolQuery := make(map[string]interface{}, 3)
 	for _, c := range b.clauses {
-		q := c.query
-		if c.rangeField != "" {
-			q = map[string]interface{}{"range": map[string]interface{}{c.rangeField: copyMap(b.ranges[c.rangeField])}}
-		}
 		list, _ := boolQuery[c.occur].([]interface{})
-		boolQuery[c.occur] = append(list, q)
+		boolQuery[c.occur] = append(list, b.clauseQuery(c))
 	}
 	return map[string]interface{}{"bool": boolQuery}
+}
+
+// clauseQuery returns the query map for c.
+func (b *ESBuilder) clauseQuery(c esClause) map[string]interface{} {
+	switch c.kind {
+	case "":
+		return c.query
+	case "range":
+		return map[string]interface{}{"range": map[string]interface{}{c.field: copyMap(b.ranges[c.field])}}
+	case "exists":
+		return map[string]interface{}{"exists": map[string]interface{}{"field": c.field}}
+	case "term", "prefix":
+		return map[string]interface{}{c.kind: map[string]interface{}{c.field: map[string]interface{}{"value": c.value}}}
+	}
+	return map[string]interface{}{c.kind: map[string]interface{}{c.field: c.value}}
+}
+
+// esOccurs lists the bool clauses in the sorted order json.Marshal writes them.
+var esOccurs = [...]string{"filter", "must", "must_not"}
+
+// appendQueryDSL appends the JSON encoding of queryDSL() for a builder with at
+// least one clause, without building its maps.
+func (b *ESBuilder) appendQueryDSL(dst []byte) ([]byte, error) {
+	dst = append(dst, `{"bool":{`...)
+	for _, occur := range esOccurs {
+		n := 0
+		for _, c := range b.clauses {
+			if c.occur != occur {
+				continue
+			}
+			if n == 0 {
+				dst = appendJSONKey(dst, occur)
+				dst = append(dst, '[')
+			} else {
+				dst = append(dst, ',')
+			}
+			n++
+			var err error
+			if dst, err = b.appendClause(dst, c); err != nil {
+				return nil, err
+			}
+		}
+		if n > 0 {
+			dst = append(dst, ']')
+		}
+	}
+	return append(dst, "}}"...), nil
+}
+
+// appendClause appends the JSON encoding of clauseQuery(c).
+func (b *ESBuilder) appendClause(dst []byte, c esClause) ([]byte, error) {
+	if c.kind == "" {
+		return appendJSON(dst, c.query)
+	}
+	dst = append(dst, '{')
+	dst = appendJSONKey(dst, c.kind)
+	dst = append(dst, '{')
+	if c.kind == "exists" {
+		dst = append(dst, `"field":`...)
+		dst = appendJSONString(dst, c.field)
+		return append(dst, "}}"...), nil
+	}
+	dst = appendJSONKey(dst, c.field)
+	var err error
+	switch c.kind {
+	case "range":
+		dst, err = appendJSON(dst, b.ranges[c.field])
+	case "term", "prefix":
+		dst = append(dst, `{"value":`...)
+		if dst, err = appendJSON(dst, c.value); err == nil {
+			dst = append(dst, '}')
+		}
+	default:
+		dst, err = appendJSON(dst, c.value)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return append(dst, "}}"...), nil
+}
+
+// appendJSON appends the JSON encoding of v, the same bytes json.Marshal
+// produces. The maps, slices and basic values the builders create are encoded
+// directly, avoiding encoding/json's reflection; any other value, such as a
+// user-defined type, goes through json.Marshal.
+func appendJSON(dst []byte, v interface{}) ([]byte, error) {
+	var err error
+	switch x := v.(type) {
+	case nil:
+		return append(dst, "null"...), nil
+	case string:
+		return appendJSONString(dst, x), nil
+	case bool:
+		return strconv.AppendBool(dst, x), nil
+	case int:
+		return strconv.AppendInt(dst, int64(x), 10), nil
+	case int8:
+		return strconv.AppendInt(dst, int64(x), 10), nil
+	case int16:
+		return strconv.AppendInt(dst, int64(x), 10), nil
+	case int32:
+		return strconv.AppendInt(dst, int64(x), 10), nil
+	case int64:
+		return strconv.AppendInt(dst, x, 10), nil
+	case uint:
+		return strconv.AppendUint(dst, uint64(x), 10), nil
+	case uint8:
+		return strconv.AppendUint(dst, uint64(x), 10), nil
+	case uint16:
+		return strconv.AppendUint(dst, uint64(x), 10), nil
+	case uint32:
+		return strconv.AppendUint(dst, uint64(x), 10), nil
+	case uint64:
+		return strconv.AppendUint(dst, x, 10), nil
+	case float32:
+		if !math.IsInf(float64(x), 0) && !math.IsNaN(float64(x)) {
+			return appendJSONFloat(dst, float64(x), 32), nil
+		}
+	case float64:
+		if !math.IsInf(x, 0) && !math.IsNaN(x) {
+			return appendJSONFloat(dst, x, 64), nil
+		}
+	case []string:
+		if x == nil {
+			return append(dst, "null"...), nil
+		}
+		return appendJSONStrings(dst, x), nil
+	case []float32:
+		if x == nil {
+			return append(dst, "null"...), nil
+		}
+		dst = append(dst, '[')
+		for i, f := range x {
+			if i > 0 {
+				dst = append(dst, ',')
+			}
+			if dst, err = appendJSON(dst, f); err != nil {
+				return nil, err
+			}
+		}
+		return append(dst, ']'), nil
+	case []interface{}:
+		if x == nil {
+			return append(dst, "null"...), nil
+		}
+		dst = append(dst, '[')
+		for i, e := range x {
+			if i > 0 {
+				dst = append(dst, ',')
+			}
+			if dst, err = appendJSON(dst, e); err != nil {
+				return nil, err
+			}
+		}
+		return append(dst, ']'), nil
+	case map[string]interface{}:
+		if x == nil {
+			return append(dst, "null"...), nil
+		}
+		keys := make([]string, 0, 8) // stays on the stack for small maps
+		for k := range x {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		dst = append(dst, '{')
+		for _, k := range keys {
+			dst = appendJSONKey(dst, k)
+			if dst, err = appendJSON(dst, x[k]); err != nil {
+				return nil, err
+			}
+		}
+		return append(dst, '}'), nil
+	}
+	// Any other type, or a NaN or infinite float for json.Marshal's error.
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return append(dst, data...), nil
+}
+
+// appendJSONKey appends an object key and its colon, preceded by a comma
+// unless it is the object's first key.
+func appendJSONKey(dst []byte, key string) []byte {
+	if dst[len(dst)-1] != '{' {
+		dst = append(dst, ',')
+	}
+	dst = appendJSONString(dst, key)
+	return append(dst, ':')
+}
+
+func appendJSONStrings(dst []byte, list []string) []byte {
+	dst = append(dst, '[')
+	for i, s := range list {
+		if i > 0 {
+			dst = append(dst, ',')
+		}
+		dst = appendJSONString(dst, s)
+	}
+	return append(dst, ']')
+}
+
+// appendJSONFloat formats a finite float the way encoding/json does.
+func appendJSONFloat(dst []byte, f float64, bits int) []byte {
+	abs := math.Abs(f)
+	format := byte('f')
+	if abs != 0 {
+		if bits == 64 && (abs < 1e-6 || abs >= 1e21) || bits == 32 && (float32(abs) < 1e-6 || float32(abs) >= 1e21) {
+			format = 'e'
+		}
+	}
+	dst = strconv.AppendFloat(dst, f, format, -1, bits)
+	if format == 'e' {
+		// Clean up e-09 to e-9.
+		n := len(dst)
+		if n >= 4 && dst[n-4] == 'e' && dst[n-3] == '-' && dst[n-2] == '0' {
+			dst[n-2] = dst[n-1]
+			dst = dst[:n-1]
+		}
+	}
+	return dst
+}
+
+// appendJSONString appends s as a JSON string with encoding/json's escaping,
+// including its HTML escaping of <, > and &.
+func appendJSONString(dst []byte, s string) []byte {
+	const hex = "0123456789abcdef"
+	mark := len(dst)
+	dst = append(dst, '"')
+	start := 0
+	for i := 0; i < len(s); {
+		if c := s[i]; c < utf8.RuneSelf {
+			if c >= 0x20 && c != '"' && c != '\\' && c != '<' && c != '>' && c != '&' {
+				i++
+				continue
+			}
+			dst = append(dst, s[start:i]...)
+			switch c {
+			case '\\', '"':
+				dst = append(dst, '\\', c)
+			case '\b':
+				dst = append(dst, '\\', 'b')
+			case '\f':
+				dst = append(dst, '\\', 'f')
+			case '\n':
+				dst = append(dst, '\\', 'n')
+			case '\r':
+				dst = append(dst, '\\', 'r')
+			case '\t':
+				dst = append(dst, '\\', 't')
+			default:
+				dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xF])
+			}
+			i++
+			start = i
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			// How invalid UTF-8 is replaced differs between encoding/json's
+			// implementations (GOEXPERIMENT=jsonv2), so leave it to json.Marshal.
+			data, _ := json.Marshal(s)
+			return append(dst[:mark], data...)
+		}
+		if r == '\u2028' || r == '\u2029' {
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, '\\', 'u', '2', '0', '2', hex[r&0xF])
+			i += size
+			start = i
+			continue
+		}
+		i += size
+	}
+	dst = append(dst, s[start:]...)
+	return append(dst, '"')
 }

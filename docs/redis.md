@@ -1,5 +1,7 @@
 # Redis
 
+**English** | [한국어](./ko/redis.md)
+
 [← Back to README](../README.md)
 
 Redis is not a SQL database, so it has its own command builders instead of `BuildSelect`/`BuildInsert`/... (those return an error for `gqbd.Redis`). Like the SQL builders, they have no client dependency: `Build()` returns the command name and its arguments for any Redis client.
@@ -30,7 +32,7 @@ Available builders:
 |---------|---------|
 | `RedisGet(key)` / `RedisSet(key, value)` | `GET` / `SET` (chain `.TTL(d)`, `.NX()`, `.XX()`) |
 | `RedisDel(keys...)` / `RedisExists(keys...)` | `DEL` / `EXISTS` |
-| `RedisExpire(key, d)` | `EXPIRE` (or `PEXPIRE` for sub-second durations) |
+| `RedisExpire(key, d)` | `EXPIRE` (or `PEXPIRE` when the duration is not a whole number of seconds) |
 | `RedisIncr(key)` / `RedisIncrBy(key, n)` | `INCR` / `INCRBY` |
 | `RedisHSet(key, map)` / `RedisHGet` / `RedisHMGet` / `RedisHGetAll` / `RedisHDel` | Hash commands |
 | `RedisLPush` / `RedisRPush` / `RedisLRange` | List commands |

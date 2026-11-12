@@ -2,7 +2,7 @@ package gqbd
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,13 +33,18 @@ type RedisCommand struct {
 //
 //	gqbd.NewRedisCommand("PFADD", "visitors", "u1", "u2")
 func NewRedisCommand(name string, args ...interface{}) *RedisCommand {
+	return newRedisCommand(name, append([]interface{}(nil), args...))
+}
+
+// newRedisCommand is NewRedisCommand taking ownership of args.
+func newRedisCommand(name string, args []interface{}) *RedisCommand {
 	c := &RedisCommand{}
 	if name == "" || strings.ContainsAny(name, " \t\r\n") {
 		c.err = fmt.Errorf("invalid Redis command name %q", name)
 		return c
 	}
 	c.name = strings.ToUpper(name)
-	c.args = append(c.args, args...)
+	c.args = args
 	return c
 }
 
@@ -103,7 +108,16 @@ func (c *RedisCommand) BuildArgs() ([]interface{}, error) {
 // RedisKey joins key parts with ":" (e.g. RedisKey("user", 42, "profile") is
 // "user:42:profile").
 func RedisKey(parts ...interface{}) string {
+	n := len(parts)
+	for _, p := range parts {
+		if s, ok := p.(string); ok {
+			n += len(s)
+		} else {
+			n += 20 // enough for any integer
+		}
+	}
 	var b strings.Builder
+	b.Grow(n)
 	for i, p := range parts {
 		if i > 0 {
 			b.WriteByte(':')
@@ -118,7 +132,7 @@ func RedisKey(parts ...interface{}) string {
 		case uint64:
 			b.WriteString(strconv.FormatUint(v, 10))
 		default:
-			fmt.Fprint(&b, v)
+			b.WriteString(fmt.Sprint(v)) //nolint:staticcheck // QF1012: Fprint would move b to the heap
 		}
 	}
 	return b.String()
@@ -128,9 +142,13 @@ func redisKeyed(name, key string, args ...interface{}) *RedisCommand {
 	if key == "" {
 		return &RedisCommand{err: fmt.Errorf("%s: empty key not allowed", name)}
 	}
-	all := make([]interface{}, 0, len(args)+1)
-	all = append(all, key)
-	return NewRedisCommand(name, append(all, args...)...)
+	return newRedisCommand(name, append(redisArgs(key, len(args)), args...))
+}
+
+// redisArgs returns a slice holding key, with room for n more arguments and
+// for options such as TTL and NX chained after the constructor.
+func redisArgs(key string, n int) []interface{} {
+	return append(make([]interface{}, 0, n+4), key)
 }
 
 func redisKeys(name string, keys []string) *RedisCommand {
@@ -144,7 +162,7 @@ func redisKeys(name string, keys []string) *RedisCommand {
 		}
 		args[i] = k
 	}
-	return NewRedisCommand(name, args...)
+	return newRedisCommand(name, args)
 }
 
 func redisMembers(name, key string, members []interface{}) *RedisCommand {
@@ -158,11 +176,14 @@ func redisFields(name, key string, fields []string) *RedisCommand {
 	if len(fields) == 0 {
 		return &RedisCommand{err: fmt.Errorf("%s: at least one field required", name)}
 	}
-	args := make([]interface{}, len(fields))
-	for i, f := range fields {
-		args[i] = f
+	if key == "" {
+		return &RedisCommand{err: fmt.Errorf("%s: empty key not allowed", name)}
 	}
-	return redisKeyed(name, key, args...)
+	args := redisArgs(key, len(fields))
+	for _, f := range fields {
+		args = append(args, f)
+	}
+	return newRedisCommand(name, args)
 }
 
 // RedisGet builds GET key.
@@ -201,12 +222,14 @@ func RedisHSet(key string, fields map[string]interface{}) *RedisCommand {
 	if len(fields) == 0 {
 		return &RedisCommand{err: fmt.Errorf("HSET: no fields provided")}
 	}
-	names := sortedKeys(fields)
-	args := make([]interface{}, 0, 2*len(names))
-	for _, f := range names {
+	if key == "" {
+		return &RedisCommand{err: fmt.Errorf("HSET: empty key not allowed")}
+	}
+	args := redisArgs(key, 2*len(fields))
+	for _, f := range sortedKeys(fields) {
 		args = append(args, f, fields[f])
 	}
-	return redisKeyed("HSET", key, args...)
+	return newRedisCommand("HSET", args)
 }
 
 // RedisHGet builds HGET key field.
@@ -254,16 +277,19 @@ func RedisZAdd(key string, members map[string]float64) *RedisCommand {
 	if len(members) == 0 {
 		return &RedisCommand{err: fmt.Errorf("ZADD: no members provided")}
 	}
+	if key == "" {
+		return &RedisCommand{err: fmt.Errorf("ZADD: empty key not allowed")}
+	}
 	names := make([]string, 0, len(members))
 	for m := range members {
 		names = append(names, m)
 	}
-	sort.Strings(names)
-	args := make([]interface{}, 0, 2*len(names))
+	slices.Sort(names)
+	args := redisArgs(key, 2*len(names))
 	for _, m := range names {
 		args = append(args, members[m], m)
 	}
-	return redisKeyed("ZADD", key, args...)
+	return newRedisCommand("ZADD", args)
 }
 
 // RedisZRange builds ZRANGE key start stop.
